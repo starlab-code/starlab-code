@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: starlab-code-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: STARLAB_SEED_DEMO_DATA
+        value: true
+      - key: STARLAB_ALLOW_ORIGINS
+        sync: false
+      - key: STARLAB_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false

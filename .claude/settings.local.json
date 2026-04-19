@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['app/config.py','app/auth.py','app/db.py','app/judge.py','app/main.py']]; print\\('OK'\\)\")",
+      "Bash(python -W ignore -c \"from app import main; print\\('import ok'\\); print\\('origins:', main._allowed_origins\\); print\\('creds:', main._allow_credentials\\)\")",
+      "Bash(python -W ignore -c ' *)"
+    ]
+  }
+}
