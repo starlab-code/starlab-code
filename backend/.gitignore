@@ -4,4 +4,6 @@ __pycache__/
 *.pyc
 database.db
 *.db
-*.env
+.env
+.env.*
+!.env.example
