@@ -6,7 +6,8 @@ from math import gcd
 from sqlmodel import Session, select
 
 from .auth import get_password_hash
-from .models import Category, DifficultyLevel, Problem, TestCase, User, UserRole
+from .config import settings
+from .models import Assignment, Category, DifficultyLevel, Problem, TestCase, User, UserRole
 
 
 Case = tuple[str, str, str]
@@ -53,15 +54,13 @@ def spec(
 
 
 def seed_initial_data(session: Session) -> None:
-    if session.exec(select(User)).first():
-        return
-
-    categories: dict[str, Category] = {}
-    for row in CATEGORY_SEEDS:
-        category = Category(**row)
-        session.add(category)
-        session.flush()
-        categories[category.name] = category
+    primary_teacher = ensure_primary_teacher(session)
+    backfill_user_hierarchy(session, primary_teacher)
+    categories = ensure_categories(session)
+    if settings.seed_demo_data and not session.exec(select(Problem)).first():
+        seed_problem_catalog(session, categories, primary_teacher)
+    session.commit()
+    return
 
     teacher = User(
         username="teacher_demo",
@@ -106,6 +105,110 @@ def seed_initial_data(session: Session) -> None:
             )
 
     session.commit()
+
+def ensure_primary_teacher(session: Session) -> User:
+    teacher = session.exec(select(User).where(User.username == settings.primary_teacher_username)).first()
+    if teacher and teacher.role != UserRole.teacher:
+        raise ValueError(f"Primary teacher username '{settings.primary_teacher_username}' is already used by a student")
+
+    if not teacher:
+        teacher = User(
+            username=settings.primary_teacher_username,
+            display_name=settings.primary_teacher_display_name,
+            hashed_password=get_password_hash(settings.primary_teacher_password),
+            role=UserRole.teacher,
+            is_primary_teacher=True,
+        )
+        session.add(teacher)
+        session.flush()
+
+    teacher.display_name = teacher.display_name or settings.primary_teacher_display_name
+    teacher.role = UserRole.teacher
+    teacher.is_primary_teacher = True
+    teacher.primary_teacher_id = teacher.id
+    teacher.created_by_teacher_id = None
+    session.add(teacher)
+    session.flush()
+    return teacher
+
+
+def backfill_user_hierarchy(session: Session, primary_teacher: User) -> None:
+    teachers = session.exec(select(User).where(User.role == UserRole.teacher)).all()
+    for teacher in teachers:
+        if teacher.id == primary_teacher.id:
+            teacher.is_primary_teacher = True
+            teacher.primary_teacher_id = teacher.id
+            teacher.created_by_teacher_id = None
+        else:
+            if teacher.primary_teacher_id is None:
+                teacher.primary_teacher_id = primary_teacher.id
+            if teacher.created_by_teacher_id is None:
+                teacher.created_by_teacher_id = primary_teacher.id
+        session.add(teacher)
+
+    assignments = session.exec(select(Assignment).order_by(Assignment.created_at)).all()
+    creator_by_student_id: dict[int, int] = {}
+    for assignment in assignments:
+        creator_by_student_id.setdefault(assignment.student_id, assignment.teacher_id)
+
+    students = session.exec(select(User).where(User.role == UserRole.student)).all()
+    for student in students:
+        creator_id = student.created_by_teacher_id or creator_by_student_id.get(student.id) or primary_teacher.id
+        creator = session.get(User, creator_id) if creator_id else None
+        if not creator or creator.role != UserRole.teacher:
+            creator = primary_teacher
+        student.created_by_teacher_id = creator.id
+        student.primary_teacher_id = creator.primary_teacher_id or creator.id
+        session.add(student)
+
+    session.flush()
+
+
+def ensure_categories(session: Session) -> dict[str, Category]:
+    categories = {category.name: category for category in session.exec(select(Category)).all()}
+    for row in CATEGORY_SEEDS:
+        if row["name"] in categories:
+            continue
+        category = Category(**row)
+        session.add(category)
+        session.flush()
+        categories[category.name] = category
+    return categories
+
+
+def seed_problem_catalog(session: Session, categories: dict[str, Category], teacher: User) -> None:
+    for problem_spec in build_problem_specs():
+        cases = problem_spec["testcases"]
+        if len(cases) != 50:
+            raise ValueError(f"{problem_spec['title']} testcases must be exactly 50")
+
+        problem = Problem(
+            title=problem_spec["title"],
+            short_description=problem_spec["short_description"],
+            statement=problem_spec["statement"],
+            input_description=problem_spec["input_description"],
+            output_description=problem_spec["output_description"],
+            constraints=problem_spec["constraints"],
+            category_id=categories[problem_spec["category_name"]].id,
+            difficulty=problem_spec["difficulty"],
+            starter_code_python=problem_spec["starter_code_python"],
+            sample_input=cases[0][0],
+            sample_output=cases[0][1],
+            created_by=teacher.id,
+        )
+        session.add(problem)
+        session.flush()
+
+        for index, (input_data, expected_output, note) in enumerate(cases):
+            session.add(
+                TestCase(
+                    problem_id=problem.id,
+                    input_data=input_data,
+                    expected_output=expected_output,
+                    is_public=index < 3,
+                    note=note,
+                )
+            )
 
 
 def build_problem_specs():

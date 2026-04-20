@@ -1,4 +1,4 @@
-from sqlalchemy import event
+from sqlalchemy import event, inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from .config import settings
@@ -38,6 +38,25 @@ if _is_sqlite:
 
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
+    _run_schema_migrations()
+
+
+def _run_schema_migrations() -> None:
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+        if not inspector.has_table("user"):
+            return
+
+        existing_columns = {column["name"] for column in inspector.get_columns("user")}
+        if "primary_teacher_id" not in existing_columns:
+            conn.execute(text('ALTER TABLE "user" ADD COLUMN primary_teacher_id INTEGER'))
+        if "created_by_teacher_id" not in existing_columns:
+            conn.execute(text('ALTER TABLE "user" ADD COLUMN created_by_teacher_id INTEGER'))
+        if "is_primary_teacher" not in existing_columns:
+            conn.execute(text('ALTER TABLE "user" ADD COLUMN is_primary_teacher BOOLEAN NOT NULL DEFAULT 0'))
+
+        conn.execute(text('CREATE INDEX IF NOT EXISTS ix_user_primary_teacher_id ON "user" (primary_teacher_id)'))
+        conn.execute(text('CREATE INDEX IF NOT EXISTS ix_user_created_by_teacher_id ON "user" (created_by_teacher_id)'))
 
 
 def get_session():

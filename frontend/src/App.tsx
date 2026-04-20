@@ -12,13 +12,17 @@ type View =
   | "assignments"
   | "submissions"
   | "live"
-  | "manage";
+  | "manage"
+  | "accounts";
 
 type UserProfile = {
   id: number;
   username: string;
   display_name: string;
   role: UserRole;
+  primary_teacher_id: number | null;
+  created_by_teacher_id: number | null;
+  is_primary_teacher: boolean;
   class_name: string | null;
 };
 
@@ -217,6 +221,19 @@ type RegisterDraft = {
   class_name: string;
 };
 
+type TeacherAccountDraft = {
+  username: string;
+  display_name: string;
+  password: string;
+};
+
+type StudentAccountDraft = {
+  username: string;
+  display_name: string;
+  password: string;
+  class_name: string;
+};
+
 const emptyTestcase = (): TestCase => ({
   input_data: "",
   expected_output: "",
@@ -248,6 +265,19 @@ const emptyAssignmentDraft = (): AssignmentDraft => ({
   problem_id: null,
   due_at: "",
   classroom_label: "",
+});
+
+const emptyTeacherAccountDraft = (): TeacherAccountDraft => ({
+  username: "",
+  display_name: "",
+  password: "",
+});
+
+const emptyStudentAccountDraft = (): StudentAccountDraft => ({
+  username: "",
+  display_name: "",
+  password: "",
+  class_name: "",
 });
 
 async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
@@ -554,10 +584,16 @@ export default function App() {
   const editorWindowState = useMemo(() => readEditorWindowState(), []);
   const isEditorWindow = editorWindowState.enabled;
   const initialEditorProblemId = editorWindowState.problemId;
-  const [token, setToken] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : localStorage.getItem("starlab-code-token"),
+  );
+  const [authBootstrapping, setAuthBootstrapping] = useState<boolean>(() =>
+    typeof window === "undefined" ? false : Boolean(localStorage.getItem("starlab-code-token")),
+  );
   const [user, setUser] = useState<UserProfile | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [classrooms, setClassrooms] = useState<ClassroomOption[]>([]);
+  const [teachers, setTeachers] = useState<UserProfile[]>([]);
   const [problems, setProblems] = useState<ProblemCard[]>([]);
   const [selectedProblemId, setSelectedProblemId] = useState<number | null>(initialEditorProblemId);
   const [selectedProblem, setSelectedProblem] = useState<ProblemDetail | null>(null);
@@ -576,7 +612,8 @@ export default function App() {
   const [categoryFilter, setCategoryFilter] = useState<number | "all">("all");
   const [difficultyFilter, setDifficultyFilter] = useState<Difficulty | "all">("all");
   const [solvePane, setSolvePane] = useState<"problem" | "history">("problem");
-  const [loginDraft, setLoginDraft] = useState({ username: "teacher_demo", password: "demo1234" });
+  const [loginRole, setLoginRole] = useState<UserRole>("teacher");
+  const [loginDraft, setLoginDraft] = useState({ username: "", password: "" });
   const [registerDraft, setRegisterDraft] = useState<RegisterDraft>({
     username: "",
     display_name: "",
@@ -584,6 +621,8 @@ export default function App() {
     class_name: "",
   });
   const [registerNewClassName, setRegisterNewClassName] = useState("");
+  const [teacherCreateDraft, setTeacherCreateDraft] = useState<TeacherAccountDraft>(emptyTeacherAccountDraft());
+  const [studentCreateDraft, setStudentCreateDraft] = useState<StudentAccountDraft>(emptyStudentAccountDraft());
   const [problemForm, setProblemForm] = useState<ProblemEditorForm>(emptyProblemForm());
   const [problemFormMode, setProblemFormMode] = useState<"create" | "edit">("create");
   const [assignmentDraft, setAssignmentDraft] = useState<AssignmentDraft>(emptyAssignmentDraft());
@@ -778,12 +817,7 @@ export default function App() {
   }, [submissions, user]);
 
   async function loadPublicClassrooms() {
-    try {
-      const result = await request<ClassroomOption[]>("/classrooms");
-      setClassrooms(result);
-    } catch {
-      setClassrooms([]);
-    }
+    setClassrooms([]);
   }
 
   async function loadAppData(nextToken: string, knownUser?: UserProfile) {
@@ -799,6 +833,7 @@ export default function App() {
         request<Submission[]>("/submissions", {}, nextToken),
       ];
       if (profile.role === "teacher") {
+        calls.push(request<UserProfile[]>("/teachers", {}, nextToken));
         calls.push(request<UserProfile[]>("/students", {}, nextToken));
         calls.push(request<SubmissionFeedItem[]>("/submissions/feed?limit=60", {}, nextToken));
         calls.push(request<AssignmentGroup[]>("/assignments/groups", {}, nextToken));
@@ -811,6 +846,7 @@ export default function App() {
         problemsResult,
         assignmentsResult,
         submissionsResult,
+        teachersResult,
         studentsResult,
         feedResult,
         groupsResult,
@@ -820,6 +856,7 @@ export default function App() {
         ProblemCard[],
         Assignment[],
         Submission[],
+        UserProfile[] | undefined,
         UserProfile[] | undefined,
         SubmissionFeedItem[] | undefined,
         AssignmentGroup[] | undefined,
@@ -832,6 +869,7 @@ export default function App() {
       setProblems(problemsResult);
       setAssignments(assignmentsResult);
       setSubmissions(submissionsResult);
+      setTeachers(teachersResult ?? []);
       setStudents(studentsResult ?? []);
       setAssignmentGroups(groupsResult ?? []);
       if (isEditorWindow) {
@@ -858,18 +896,20 @@ export default function App() {
       localStorage.removeItem("starlab-code-token");
       setToken(null);
       setUser(null);
+      setTeachers([]);
     } finally {
+      setAuthBootstrapping(false);
       setIsLoading(false);
     }
   }
 
   useEffect(() => {
-    void loadPublicClassrooms();
-  }, []);
-
-  useEffect(() => {
     const savedToken = localStorage.getItem("starlab-code-token");
-    if (savedToken) void loadAppData(savedToken);
+    if (savedToken) {
+      void loadAppData(savedToken);
+      return;
+    }
+    setAuthBootstrapping(false);
   }, []);
 
   useEffect(() => {
@@ -949,11 +989,7 @@ export default function App() {
     const nextUrl = new URL(window.location.href);
     nextUrl.searchParams.set("mode", "editor");
     nextUrl.searchParams.set("problem", String(problemId));
-    const popup = window.open(
-      nextUrl.toString(),
-      "starlab-solve-window",
-      "popup=yes,width=1520,height=960,left=120,top=60,resizable=yes,scrollbars=yes",
-    );
+    const popup = window.open(nextUrl.toString(), "_blank");
 
     if (popup) {
       popup.focus();
@@ -1005,6 +1041,7 @@ export default function App() {
       const body = new URLSearchParams();
       body.set("username", loginDraft.username);
       body.set("password", loginDraft.password);
+      body.set("role", loginRole);
       const auth = await request<AuthResponse>("/auth/token", {
         method: "POST",
         body,
@@ -1015,6 +1052,50 @@ export default function App() {
       setMessage(`${auth.user.display_name} 님 환영합니다.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "로그인에 실패했습니다.");
+    }
+  }
+
+  async function handleCreateTeacher(event: FormEvent) {
+    event.preventDefault();
+    if (!token || !user || user.role !== "teacher") return;
+    setError(null);
+    setMessage(null);
+    try {
+      const created = await request<UserProfile>(
+        "/users/teachers",
+        {
+          method: "POST",
+          body: JSON.stringify(teacherCreateDraft),
+        },
+        token,
+      );
+      setTeacherCreateDraft(emptyTeacherAccountDraft());
+      setMessage(`${created.display_name} 선생님 계정을 만들었습니다.`);
+      await loadAppData(token, user);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "선생님 계정 생성에 실패했습니다.");
+    }
+  }
+
+  async function handleCreateStudent(event: FormEvent) {
+    event.preventDefault();
+    if (!token || !user || user.role !== "teacher") return;
+    setError(null);
+    setMessage(null);
+    try {
+      const created = await request<UserProfile>(
+        "/users/students",
+        {
+          method: "POST",
+          body: JSON.stringify(studentCreateDraft),
+        },
+        token,
+      );
+      setStudentCreateDraft(emptyStudentAccountDraft());
+      setMessage(`${created.display_name} 학생 계정을 만들었습니다.`);
+      await loadAppData(token, user);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "학생 계정 생성에 실패했습니다.");
     }
   }
 
@@ -1046,6 +1127,7 @@ export default function App() {
     localStorage.removeItem("starlab-code-token");
     setToken(null);
     setUser(null);
+    setTeachers([]);
     setSelectedProblem(null);
     setSelectedProblemId(null);
     setAssignments([]);
@@ -1253,6 +1335,93 @@ export default function App() {
     setGroupDetail([]);
   }
 
+  if (authBootstrapping) {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <div className="auth-brand">
+            <span className="brand-mark">SC</span>
+            <div>
+              <h1>Starlab Code</h1>
+              <p>로그인 상태를 확인하는 중입니다.</p>
+            </div>
+          </div>
+          <div className="toast toast-info">저장된 로그인 정보를 불러오는 중입니다...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user || !token) {
+    return (
+      <div className="auth-page">
+        <div className="auth-card auth-card-wide">
+          <div className="auth-brand">
+            <span className="brand-mark">SC</span>
+            <div>
+              <h1>Starlab Code</h1>
+              <p>선생님이 계정을 생성하고, 학생은 배정된 계정으로 바로 로그인하는 구조입니다.</p>
+            </div>
+          </div>
+
+          <div className="auth-role-tabs" role="tablist" aria-label="로그인 유형">
+            <button
+              type="button"
+              className={loginRole === "teacher" ? "auth-role-tab auth-role-tab-active" : "auth-role-tab"}
+              onClick={() => setLoginRole("teacher")}
+            >
+              선생님 로그인
+            </button>
+            <button
+              type="button"
+              className={loginRole === "student" ? "auth-role-tab auth-role-tab-active" : "auth-role-tab"}
+              onClick={() => setLoginRole("student")}
+            >
+              학생 로그인
+            </button>
+          </div>
+
+          <form className="auth-form" onSubmit={handleLogin}>
+            <h2>{loginRole === "teacher" ? "선생님 계정으로 로그인" : "학생 계정으로 로그인"}</h2>
+            <label>
+              <span>아이디</span>
+              <input
+                value={loginDraft.username}
+                onChange={(e) => setLoginDraft((c) => ({ ...c, username: e.target.value }))}
+                placeholder={loginRole === "teacher" ? "선생님 아이디" : "학생 아이디"}
+              />
+            </label>
+            <label>
+              <span>비밀번호</span>
+              <input
+                type="password"
+                value={loginDraft.password}
+                onChange={(e) => setLoginDraft((c) => ({ ...c, password: e.target.value }))}
+                placeholder="비밀번호"
+              />
+            </label>
+            <button className="btn btn-primary btn-block" type="submit">
+              {loginRole === "teacher" ? "선생님 로그인" : "학생 로그인"}
+            </button>
+          </form>
+
+          <div className="auth-note">
+            <strong>{loginRole === "teacher" ? "선생님 계정 안내" : "학생 계정 안내"}</strong>
+            <p className="muted">
+              {loginRole === "teacher"
+                ? "메인 선생님 계정은 배포 시 자동 생성되고, 추가 선생님 계정과 학생 계정은 로그인 후 선생님 화면에서 만들 수 있습니다."
+                : "학생 계정은 선생님이 생성해 준 아이디와 비밀번호로만 로그인할 수 있습니다."}
+            </p>
+          </div>
+
+          {(message || error) && (
+            <div className={`toast ${error ? "toast-error" : "toast-ok"}`}>{error ?? message}</div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (!user || !token) {
     return (
       <div className="auth-page">
@@ -1432,7 +1601,7 @@ export default function App() {
         )}
 
         {view === "home" && user.role === "teacher" && (
-          <TeacherHome
+          <TeacherHomeRedesign
             user={user}
             metrics={teacherMetrics}
             dashboard={dashboard}
@@ -1506,6 +1675,7 @@ export default function App() {
           <AssignmentsView
             user={user}
             assignments={assignments}
+            teachers={teachers}
             students={students}
             problems={problems}
             groups={assignmentGroups}
@@ -1514,6 +1684,12 @@ export default function App() {
             groupDetailLoading={groupDetailLoading}
             onOpenGroup={openGroupDetail}
             onCloseGroup={closeGroupDetail}
+            teacherCreateDraft={teacherCreateDraft}
+            setTeacherCreateDraft={setTeacherCreateDraft}
+            studentCreateDraft={studentCreateDraft}
+            setStudentCreateDraft={setStudentCreateDraft}
+            onCreateTeacher={handleCreateTeacher}
+            onCreateStudent={handleCreateStudent}
             assignmentDraft={assignmentDraft}
             setAssignmentDraft={setAssignmentDraft}
             onCreate={createAssignments}
@@ -1801,17 +1977,45 @@ function StudentAcademyHome(props: {
   onGoAssignments: () => void;
 }) {
   const { user, stats, metrics, dashboard, assignments, submissions, problems, onOpenProblem, onGoProblems, onGoAssignments } = props;
-  const pending = assignments.filter((a) => !a.submitted).slice(0, 5);
-  const recentSubmissions = submissions.slice(0, 6);
-  const problemMap = new Map(problems.map((problem) => [problem.id, problem]));
+  const pendingAssignments = assignments.filter((a) => !a.submitted);
+  const pending = pendingAssignments.slice(0, 5);
   const recommended = problems
     .filter((p) => !submissions.some((s) => s.problem_id === p.id && s.status === "accepted"))
     .slice(0, 6);
 
   const totalProblems = dashboard?.total_problems ?? 0;
   const solved = stats?.solved ?? 0;
+  const accuracy = stats?.accuracy ?? 0;
+  const attempts = stats?.attempts ?? 0;
+  const streak = metrics?.streak ?? 0;
   const overallPct = totalProblems === 0 ? 0 : Math.round((solved / totalProblems) * 100);
-  const maxAccepted = metrics ? Math.max(1, ...metrics.activity.map((a) => a.accepted)) : 1;
+  const activity = metrics?.activity?.length
+    ? metrics.activity
+    : Array.from({ length: 30 }, (_, index) => ({
+        date: new Date(Date.now() - (29 - index) * 24 * 60 * 60 * 1000),
+        submitted: 0,
+        accepted: 0,
+      }));
+  const maxAccepted = Math.max(1, ...activity.map((day) => day.accepted));
+  const difficultyRows = (["beginner", "basic", "intermediate"] as const).map((level) => {
+    const stat = metrics?.difficultyTotals[level] ?? { solved: 0, total: 0 };
+    return {
+      level,
+      solved: stat.solved,
+      total: stat.total,
+      pct: stat.total === 0 ? 0 : Math.round((stat.solved / stat.total) * 100),
+    };
+  });
+  const categoryRows = metrics?.categoryRows ?? [];
+  const avatarLabel = user.display_name.trim().charAt(0) || "S";
+  const dueSoonCount = pendingAssignments.filter((assignment) => {
+    if (!assignment.due_at) return false;
+    const due = new Date(assignment.due_at).getTime();
+    if (Number.isNaN(due)) return false;
+    const diff = due - Date.now();
+    return diff <= 1000 * 60 * 60 * 24 && diff >= -1000 * 60 * 60 * 24;
+  }).length;
+
   const intensity = (n: number) => {
     if (n === 0) return 0;
     if (n >= maxAccepted) return 4;
@@ -1821,73 +2025,131 @@ function StudentAcademyHome(props: {
     return 3;
   };
 
+  const dueLabel = (dueAt: string | null) => {
+    if (!dueAt) {
+      return { label: "기한 없음", urgent: false };
+    }
+    const due = new Date(dueAt).getTime();
+    if (Number.isNaN(due)) {
+      return { label: formatDate(dueAt), urgent: false };
+    }
+    return {
+      label: formatDate(dueAt),
+      urgent: due - Date.now() <= 1000 * 60 * 60 * 48,
+    };
+  };
+
   return (
-    <div className="student-home student-solved-home">
-      <header className="solved-home-hero">
-        <div className="solved-home-profile">
-          <div className="solved-home-profile-top">
-            <span className="chip chip-soft">ACADEMY DASHBOARD</span>
-            <span className="chip chip-soft">{user.class_name ? `${user.class_name} 수강반` : "수강반 미지정"}</span>
+    <div className="student-home sh-root">
+      <header className="sh-header">
+        <div className="sh-profile">
+          <div className="sh-avatar" aria-hidden="true">
+            {avatarLabel}
           </div>
-          <h1>{user.display_name}</h1>
-          <p className="muted">
-            학원 과제와 추천 문제를 한눈에 확인하고, 최근 풀이 흐름까지 solved.ac처럼 빠르게 읽을 수 있어요.
-          </p>
-          <div className="solved-home-actions">
-            <button className="btn btn-primary" onClick={onGoProblems}>
-              문제 풀러 가기
-            </button>
-            <button className="btn btn-ghost" onClick={onGoAssignments}>
-              내 과제 보기
-            </button>
+          <div>
+            <h1 className="sh-name">{user.display_name}</h1>
+            <div className="sh-meta">
+              <span className="sh-class">{user.class_name ? `${user.class_name} 수강반` : "수강반 미지정"}</span>
+              <span className="sh-desc">Academy Dashboard</span>
+            </div>
+            <div className="sh-actions">
+              <button className="btn btn-primary btn-sm" onClick={onGoProblems}>
+                문제 풀러 가기
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={onGoAssignments}>
+                내 과제 보기
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="solved-home-stats">
-          <article className="solved-stat">
-            <span className="solved-stat-label">해결한 문제</span>
-            <strong>
+        <div className="sh-stats">
+          <article className="sh-stat">
+            <div className="sh-stat-label">해결한 문제</div>
+            <div className="sh-stat-value">
               {solved}
-              <span className="muted"> / {totalProblems}</span>
-            </strong>
-            <p className="muted">전체 문제 기준 {overallPct}% 진행</p>
+              <span className="sh-stat-sub">/{totalProblems}</span>
+            </div>
+            <div className="sh-stat-hint">전체의 {overallPct}%를 완료했어요.</div>
+            <div className="sh-stat-bar">
+              <div className="sh-stat-bar-fill" style={{ width: `${overallPct}%` }} />
+            </div>
           </article>
-          <article className="solved-stat">
-            <span className="solved-stat-label">정답률</span>
-            <strong>
-              {stats?.accuracy ?? 0}
-              <span className="muted">%</span>
-            </strong>
-            <p className="muted">총 제출 {stats?.attempts ?? 0}회</p>
+
+          <article className="sh-stat">
+            <div className="sh-stat-label">정답률</div>
+            <div className="sh-stat-value">
+              {accuracy}
+              <span className="sh-stat-sub">%</span>
+            </div>
+            <div className="sh-stat-hint">총 {attempts}회 제출</div>
+            <div className="sh-stat-bar">
+              <div className="sh-stat-bar-fill sh-stat-bar-fill-ok" style={{ width: `${accuracy}%` }} />
+            </div>
           </article>
-          <article className="solved-stat">
-            <span className="solved-stat-label">최근 7일</span>
-            <strong>{metrics?.last7Solved ?? 0}</strong>
-            <p className="muted">최근 일주일간 해결한 문제</p>
+
+          <article className="sh-stat">
+            <div className="sh-stat-label">연속 풀이</div>
+            <div className="sh-stat-value">
+              {streak}
+              <span className="sh-stat-sub">일</span>
+            </div>
+            <div className="sh-stat-hint">최근 30일 중 {metrics?.activeDays ?? 0}일 활동</div>
           </article>
-          <article className="solved-stat">
-            <span className="solved-stat-label">진행 중인 과제</span>
-            <strong>{pending.length}</strong>
-            <p className="muted">오늘 바로 풀어야 할 과제</p>
+
+          <article className="sh-stat">
+            <div className="sh-stat-label">대기 과제</div>
+            <div className="sh-stat-value">
+              {pendingAssignments.length}
+              <span className="sh-stat-sub">건</span>
+            </div>
+            <div className="sh-stat-hint">
+              {dueSoonCount > 0 ? `오늘 전후 마감 ${dueSoonCount}건` : "가까운 마감 일정이 없어요."}
+            </div>
           </article>
         </div>
       </header>
 
-      <div className="solved-home-grid">
-        <section className="home-section solved-panel solved-panel-wide">
-          <header className="home-section-head solved-head">
+      <section className="sh-heat">
+        <div className="sh-heat-head">
+          <h2>최근 30일 풀이 흐름</h2>
+          <span className="sh-heat-meta">
+            활동일 {metrics?.activeDays ?? 0}일 · 정답 {metrics?.last30Solved ?? 0}개
+          </span>
+        </div>
+        <div className="sh-heat-strip">
+          {activity.map((day, index) => (
+            <div
+              key={index}
+              className={`sh-heat-cell sh-heat-${intensity(day.accepted)}`}
+              title={`${day.date.getMonth() + 1}/${day.date.getDate()} · 제출 ${day.submitted} · 정답 ${day.accepted}`}
+            />
+          ))}
+        </div>
+        <div className="sh-heat-legend">
+          <span>적음</span>
+          {[0, 1, 2, 3, 4].map((level) => (
+            <span key={level} className={`sh-heat-cell sh-heat-${level}`} />
+          ))}
+          <span>많음</span>
+        </div>
+      </section>
+
+      <div className="sh-grid">
+        <section className="sh-panel">
+          <header className="sh-panel-head">
             <h2>추천 문제</h2>
-            <button className="link" onClick={onGoProblems}>
+            <button className="sh-link" onClick={onGoProblems}>
               전체 문제 보기 →
             </button>
           </header>
           {recommended.length === 0 ? (
-            <p className="empty-inline">풀지 않은 추천 문제가 없어요. 지금 흐름을 아주 잘 타고 있어요.</p>
+            <p className="sh-empty">풀지 않은 추천 문제가 없어요. 지금 흐름을 아주 잘 타고 있어요.</p>
           ) : (
-            <table className="data-table compact solved-table">
+            <table className="data-table compact sh-table">
               <thead>
                 <tr>
-                  <th>번호</th>
+                  <th className="mono">#</th>
                   <th>문제</th>
                   <th>난이도</th>
                   <th>분류</th>
@@ -1896,15 +2158,17 @@ function StudentAcademyHome(props: {
               <tbody>
                 {recommended.map((problem) => (
                   <tr key={problem.id} className="clickable" onClick={() => onOpenProblem(problem.id)}>
-                    <td className="mono">#{problem.id}</td>
+                    <td className="mono sh-table-id">#{problem.id}</td>
                     <td>
                       <strong>{problem.title}</strong>
-                      <p className="muted">{problem.short_description}</p>
+                      <div className="sh-table-sub">{problem.short_description}</div>
                     </td>
                     <td>
                       <DifficultyBadge level={problem.difficulty} />
                     </td>
-                    <td className="muted">{problem.category_name}</td>
+                    <td>
+                      <span className="chip">{problem.category_name}</span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1912,151 +2176,92 @@ function StudentAcademyHome(props: {
           )}
         </section>
 
-        <section className="home-section solved-panel">
-          <header className="home-section-head solved-head">
-            <h2>진행 중인 과제</h2>
-            <button className="link" onClick={onGoAssignments}>
-              과제 전체 →
-            </button>
-          </header>
-          {pending.length === 0 ? (
-            <p className="empty-inline">지금 진행 중인 과제가 없어요. 추천 문제를 풀면서 흐름을 이어가면 됩니다.</p>
-          ) : (
-            <ul className="clean-list solved-clean-list">
-              {pending.map((assignment) => (
-                <li key={assignment.id} className="clean-list-item" onClick={() => onOpenProblem(assignment.problem_id)}>
-                  <div className="clean-list-main">
-                    <strong>{assignment.problem_title}</strong>
-                    <span className="muted">
-                      {assignment.title} · {assignment.assignment_type === "homework" ? "숙제" : "수업"}
+        <div className="sh-side-stack">
+          <section className="sh-panel">
+            <header className="sh-panel-head">
+              <h2>진행 중인 과제</h2>
+              <button className="sh-link" onClick={onGoAssignments}>
+                과제 전체 →
+              </button>
+            </header>
+            {pending.length === 0 ? (
+              <p className="sh-empty">진행 중인 과제가 없어요. 추천 문제를 풀면서 리듬을 이어가 보세요.</p>
+            ) : (
+              <ul className="sh-alist">
+                {pending.map((assignment) => {
+                  const due = dueLabel(assignment.due_at);
+                  return (
+                    <li key={assignment.id} onClick={() => onOpenProblem(assignment.problem_id)}>
+                      <div className="sh-alist-main">
+                        <strong>{assignment.problem_title}</strong>
+                        <span className="sh-alist-sub">
+                          {assignment.title} · {assignment.assignment_type === "homework" ? "숙제" : "수업"}
+                        </span>
+                      </div>
+                      <span className={due.urgent ? "sh-alist-due" : "sh-alist-date"}>{due.label}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
+          <section className="sh-panel">
+            <header className="sh-panel-head">
+              <h2>난이도 현황</h2>
+              <span className="sh-panel-meta">누적 풀이 기준</span>
+            </header>
+            <ul className="sh-mastery">
+              {difficultyRows.map((row) => (
+                <li key={row.level}>
+                  <div className="sh-mastery-head">
+                    <DifficultyBadge level={row.level} />
+                    <span className="sh-mastery-nums mono">
+                      {row.solved}
+                      <span className="muted">/{row.total}</span>
                     </span>
+                    <span className="sh-mastery-nums">{row.pct}%</span>
                   </div>
-                  <span className="muted mono clean-list-meta">{formatDate(assignment.due_at)}</span>
+                  <div className="sh-mastery-bar">
+                    <div className={`sh-mastery-fill fill-${row.level}`} style={{ width: `${row.pct}%` }} />
+                  </div>
                 </li>
               ))}
             </ul>
-          )}
-        </section>
+          </section>
+        </div>
+      </div>
 
-        <section className="home-section solved-panel">
-          <header className="home-section-head solved-head">
-            <h2>최근 제출</h2>
-            <span className="muted small">{recentSubmissions.length}건</span>
-          </header>
-          {recentSubmissions.length === 0 ? (
-            <p className="empty-inline">아직 제출 기록이 없어요. 첫 문제부터 가볍게 시작해 보세요.</p>
-          ) : (
-            <table className="data-table compact solved-table">
-              <thead>
-                <tr>
-                  <th>문제</th>
-                  <th>결과</th>
-                  <th>테스트</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentSubmissions.map((submission) => {
-                  const problem = problemMap.get(submission.problem_id);
-                  return (
-                    <tr key={submission.id} className="clickable" onClick={() => onOpenProblem(submission.problem_id)}>
-                      <td>
-                        <strong>{problem?.title ?? `문제 #${submission.problem_id}`}</strong>
-                        <p className="muted">{formatDate(submission.created_at)}</p>
-                      </td>
-                      <td>
-                        <StatusBadge status={submission.status} />
-                      </td>
-                      <td className="mono">
-                        {submission.passed_tests}/{submission.total_tests}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </section>
-
-        <section className="home-section solved-panel">
-          <header className="home-section-head solved-head">
-            <h2>난이도 현황</h2>
-            <span className="muted small">풀이 누적 기준</span>
-          </header>
-          <ul className="mastery-list">
-            {(["beginner", "basic", "intermediate"] as const).map((level) => {
-              const stat = metrics?.difficultyTotals[level] ?? { solved: 0, total: 0 };
-              const pct = stat.total === 0 ? 0 : Math.round((stat.solved / stat.total) * 100);
+      <section className="sh-panel">
+        <header className="sh-panel-head">
+          <h2>카테고리별 풀이</h2>
+          <span className="sh-panel-meta">어떤 유형을 자주 풀고 있는지 확인해 보세요.</span>
+        </header>
+        {categoryRows.length === 0 ? (
+          <p className="sh-empty">아직 분류별 풀이 기록이 없어요.</p>
+        ) : (
+          <ul className="sh-mastery sh-mastery-grid">
+            {categoryRows.map((row) => {
+              const pct = row.total === 0 ? 0 : Math.round((row.solved / row.total) * 100);
               return (
-                <li key={level} className="mastery-row">
-                  <div className="mastery-head">
-                    <DifficultyBadge level={level} />
-                    <span className="mastery-count mono">
-                      {stat.solved}
-                      <span className="muted">/{stat.total}</span>
+                <li key={row.name}>
+                  <div className="sh-mastery-head">
+                    <span className="sh-mastery-cat">{row.name}</span>
+                    <span className="sh-mastery-nums mono">
+                      {row.solved}
+                      <span className="muted">/{row.total}</span>
                     </span>
-                    <span className="mastery-pct mono muted">{pct}%</span>
+                    <span className="sh-mastery-nums">{pct}%</span>
+                  </div>
+                  <div className="sh-mastery-bar">
+                    <div className="sh-mastery-fill fill-cat" style={{ width: `${pct}%` }} />
                   </div>
                 </li>
               );
             })}
           </ul>
-        </section>
-
-        <section className="home-section solved-panel">
-          <header className="home-section-head solved-head">
-            <h2>카테고리별 풀이</h2>
-            <span className="muted small">상위 6개 분류</span>
-          </header>
-          {!metrics || metrics.categoryRows.length === 0 ? (
-            <p className="empty-inline">아직 분류별 풀이 기록이 없어요.</p>
-          ) : (
-            <ul className="mastery-list">
-              {metrics.categoryRows.slice(0, 6).map((row) => {
-                const pct = row.total === 0 ? 0 : Math.round((row.solved / row.total) * 100);
-                return (
-                  <li key={row.name} className="mastery-row">
-                    <div className="mastery-head">
-                      <span className="mastery-cat">{row.name}</span>
-                      <span className="mastery-count mono">
-                        {row.solved}
-                        <span className="muted">/{row.total}</span>
-                      </span>
-                      <span className="mastery-pct mono muted">{pct}%</span>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-
-        <section className="home-section solved-panel solved-panel-wide">
-          <header className="home-section-head solved-head">
-            <h2>최근 30일 풀이 흐름</h2>
-            <span className="muted small">
-              활동일 {metrics?.activeDays ?? 0}일 · 정답 {metrics?.last30Solved ?? 0}개
-            </span>
-          </header>
-          <div className="activity-strip solved-activity-strip">
-            {metrics?.activity.map((day, i) => (
-              <div
-                key={i}
-                className={`activity-cell activity-${intensity(day.accepted)}`}
-                title={`${day.date.getMonth() + 1}/${day.date.getDate()} · 제출 ${day.submitted} · 정답 ${day.accepted}`}
-              />
-            ))}
-          </div>
-          <div className="activity-legend muted small">
-            <span>적음</span>
-            <span className="activity-cell activity-0" />
-            <span className="activity-cell activity-1" />
-            <span className="activity-cell activity-2" />
-            <span className="activity-cell activity-3" />
-            <span className="activity-cell activity-4" />
-            <span>많음</span>
-          </div>
-        </section>
-      </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -2319,6 +2524,303 @@ function TeacherHome(props: {
           </ul>
         )}
       </section>
+    </div>
+  );
+}
+
+function TeacherHomeRedesign(props: {
+  user: UserProfile;
+  metrics: TeacherMetrics | null;
+  dashboard: DashboardSummary | null;
+  feed: SubmissionFeedItem[];
+  highlightId: number | null;
+  paused: boolean;
+  onTogglePause: () => void;
+  onOpenProblem: (id: number) => void;
+  assignments: Assignment[];
+  students: UserProfile[];
+  onGoLive: () => void;
+  onGoAssignments: () => void;
+  onGoManage: () => void;
+}) {
+  const {
+    user,
+    metrics,
+    dashboard,
+    feed,
+    highlightId,
+    paused,
+    onTogglePause,
+    onOpenProblem,
+    assignments,
+    students,
+    onGoLive,
+    onGoAssignments,
+    onGoManage,
+  } = props;
+  const studentMap = new Map(students.map((s) => [s.id, s]));
+  const pendingAssignments = assignments.filter((a) => !a.submitted).length;
+  const assignmentGroups = Array.from(
+    assignments
+      .reduce((map, assignment) => {
+        const student = studentMap.get(assignment.student_id);
+        const classLabel = assignment.classroom_label ?? student?.class_name ?? "개별";
+        const key = `${assignment.problem_id}::${assignment.title}::${classLabel}`;
+        const current = map.get(key) ?? {
+          key,
+          problemId: assignment.problem_id,
+          classLabel,
+          title: assignment.title,
+          problemTitle: assignment.problem_title,
+          submitted: 0,
+          total: 0,
+          dueAt: assignment.due_at,
+          assignmentType: assignment.assignment_type,
+        };
+        current.total += 1;
+        if (assignment.submitted) current.submitted += 1;
+        if (assignment.due_at && (!current.dueAt || new Date(assignment.due_at) < new Date(current.dueAt))) {
+          current.dueAt = assignment.due_at;
+        }
+        map.set(key, current);
+        return map;
+      }, new Map<string, {
+        key: string;
+        problemId: number;
+        classLabel: string;
+        title: string;
+        problemTitle: string;
+        submitted: number;
+        total: number;
+        dueAt: string | null;
+        assignmentType: AssignmentType;
+      }>())
+      .values(),
+  ).slice(0, 4);
+  const activity = metrics?.activity ?? [];
+  const maxAccepted = activity.length ? Math.max(1, ...activity.map((a) => a.accepted)) : 1;
+  const intensity = (n: number) => {
+    if (n === 0) return 0;
+    if (n >= maxAccepted) return 4;
+    const ratio = n / maxAccepted;
+    if (ratio < 0.34) return 1;
+    if (ratio < 0.67) return 2;
+    return 3;
+  };
+
+  return (
+    <div className="teacher-home">
+      <header className="th-header">
+        <div className="th-header-left">
+          <span className={`th-live-dot ${paused ? "paused" : ""}`} />
+          <div>
+            <div className="th-header-title">{user.display_name} 선생님의 오늘도 순항 중입니다</div>
+            <div className="th-header-sub">
+              오늘 <strong>{metrics?.todayActiveStudents ?? 0}명</strong>이 활동 중이고 총 학생{" "}
+              <strong>{students.length}명</strong>, 배정 과제는 <strong>{dashboard?.assigned_count ?? 0}건</strong>입니다.
+            </div>
+          </div>
+        </div>
+        <div className="th-header-acts">
+          <button className="btn btn-ghost btn-sm" onClick={onTogglePause}>
+            {paused ? "실시간 재개" : "실시간 일시정지"}
+          </button>
+          <button className="btn btn-primary btn-sm" onClick={onGoLive}>
+            채점 현황 보기
+          </button>
+          <button className="btn btn-primary btn-sm" onClick={onGoManage}>
+            + 새 문제 추가
+          </button>
+        </div>
+      </header>
+
+      <section className="th-metrics">
+        <article className="metric">
+          <div className="metric-label">오늘 제출</div>
+          <div className="metric-val">
+            {metrics?.todaySubmitted ?? 0}
+            <span className="metric-sub">건</span>
+          </div>
+          <div className="metric-hint">정답 {metrics?.todayAccepted ?? 0}건 포함</div>
+        </article>
+        <article className="metric">
+          <div className="metric-label">오늘 정답률</div>
+          <div className="metric-val">
+            {metrics?.todayAccuracy ?? 0}
+            <span className="metric-sub">%</span>
+          </div>
+          <div className="metric-hint">전체 제출 기준</div>
+          <div className="metric-bar">
+            <div className="metric-bar-fill" style={{ width: `${metrics?.todayAccuracy ?? 0}%` }} />
+          </div>
+        </article>
+        <article className="metric">
+          <div className="metric-label">활동 학생</div>
+          <div className="metric-val">
+            {metrics?.todayActiveStudents ?? 0}
+            <span className="metric-sub">/ {students.length}</span>
+          </div>
+          <div className="metric-hint">최근 7일 상위 활동 학생 {metrics?.topStudents.length ?? 0}명</div>
+          <div className="metric-bar">
+            <div
+              className="metric-bar-fill metric-bar-accent"
+              style={{
+                width: `${students.length === 0 ? 0 : Math.round(((metrics?.todayActiveStudents ?? 0) / students.length) * 100)}%`,
+              }}
+            />
+          </div>
+        </article>
+        <article className="metric">
+          <div className="metric-label">미완료 과제</div>
+          <div className="metric-val">
+            {pendingAssignments}
+            <span className="metric-sub">건</span>
+          </div>
+          <div className="metric-hint">전체 과제 {assignments.length}건 기준</div>
+        </article>
+      </section>
+
+      <div className="th-grid-main">
+        <section className="card feed-wrap">
+          <div className="panel-head">
+            <h2>
+              <span className={`th-live-dot ${paused ? "paused" : ""}`} />
+              실시간 제출 피드
+              <span className="panel-count">{feed.length}건</span>
+            </h2>
+            <button className="panel-link" onClick={onGoLive}>
+              전체 화면 보기
+            </button>
+          </div>
+          {feed.length === 0 ? (
+            <p className="th-empty">아직 들어온 제출이 없습니다. 학생들의 첫 시도를 기다리는 중입니다.</p>
+          ) : (
+            <ul className="feed-list">
+              {feed.slice(0, 12).map((item) => (
+                <li
+                  key={item.id}
+                  className={`feed-row ${item.id === highlightId ? "fresh" : ""}`}
+                  onClick={() => onOpenProblem(item.problem_id)}
+                >
+                  <div className="feed-time">{timeAgo(item.created_at)}</div>
+                  <div className="feed-who">
+                    <strong>{item.student_name}</strong>
+                    <span>{item.class_name ? `${item.class_name} · ` : ""}@{item.student_username}</span>
+                  </div>
+                  <div className="feed-prob">
+                    <strong>{item.problem_title}</strong>
+                    <span>{item.category_name}</span>
+                  </div>
+                  <div className="feed-verdict">
+                    <StatusBadge status={item.status} />
+                  </div>
+                  <div className="feed-tests">{item.passed_tests}/{item.total_tests}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="card">
+          <div className="panel-head">
+            <h2>이번 주 상위 학생</h2>
+            <span className="muted">최근 7일 정답 기준</span>
+          </div>
+          {!metrics || metrics.topStudents.length === 0 ? (
+            <p className="th-empty">이번 주 활동 데이터가 아직 충분하지 않습니다.</p>
+          ) : (
+            <ul className="ts-list">
+              {metrics.topStudents.map((row, i) => {
+                const student = studentMap.get(row.id);
+                const accuracy = row.submitted === 0 ? 0 : Math.round((row.accepted / row.submitted) * 100);
+                return (
+                  <li key={row.id} className="ts-row">
+                    <div className="ts-rank">{i + 1}</div>
+                    <div className="ts-main">
+                      <strong>{student?.display_name ?? `학생 #${row.id}`}</strong>
+                      <span>{student?.class_name ?? "반 정보 없음"}</span>
+                    </div>
+                    <div className="ts-meta">
+                      <strong>{row.solved}문제</strong>
+                      <span>정답률 {accuracy}%</span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      </div>
+
+      <div className="th-grid-sub">
+        <section className="card">
+          <div className="panel-head">
+            <h2>30일 활동 히트맵</h2>
+            <span className="muted">활동일 {metrics?.activeDays ?? 0}일</span>
+          </div>
+          <div className="heat-body">
+            <div className="heat-strip">
+              {activity.map((day, i) => (
+                <div
+                  key={i}
+                  className={`hc hc-${intensity(day.accepted)}`}
+                  title={`${day.date.getMonth() + 1}/${day.date.getDate()} · 제출 ${day.submitted} · 정답 ${day.accepted}`}
+                />
+              ))}
+            </div>
+            <div className="heat-legend">
+              적음
+              {[0, 1, 2, 3, 4].map((level) => (
+                <div key={level} className={`hc hc-${level}`} />
+              ))}
+              많음
+            </div>
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="panel-head">
+            <h2>과제 진행 현황</h2>
+            <button className="panel-link" onClick={onGoAssignments}>
+              과제 관리하기
+            </button>
+          </div>
+          {assignmentGroups.length === 0 ? (
+            <p className="th-empty">표시할 과제가 아직 없습니다.</p>
+          ) : (
+            <ul className="asn-list">
+              {assignmentGroups.map((assignment) => {
+                const pct = assignment.total === 0 ? 0 : Math.round((assignment.submitted / assignment.total) * 100);
+                const tone = pct === 100 ? "ok" : pct >= 50 ? "mid" : "low";
+                return (
+                  <li key={assignment.key} className="asn-row" onClick={() => onOpenProblem(assignment.problemId)}>
+                    <div className="asn-main">
+                      <strong>
+                        <span className="cls-chip">{assignment.classLabel}</span>
+                        {assignment.problemTitle}
+                      </strong>
+                      <span>
+                        {assignment.title}
+                        {assignment.dueAt ? ` · 마감 ${formatDate(assignment.dueAt)}` : ""}
+                        {assignment.assignmentType === "classroom" ? " · 수업용" : " · 숙제"}
+                      </span>
+                    </div>
+                    <div className="asn-prog">
+                      <div className={`asn-pbar asn-pbar-${tone}`}>
+                        <div className="asn-pfill" style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="asn-pmeta">
+                        <strong>{pct}%</strong>
+                        <span>{assignment.submitted}/{assignment.total}명</span>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
@@ -2594,91 +3096,87 @@ function SolveView(props: {
   if (!problem) {
     return <div className="empty card">문제를 선택해주세요. 좌측 메뉴 [문제]에서 풀고 싶은 문제를 고를 수 있어요.</div>;
   }
+  const currentAssignment = assignments[0] ?? null;
   return (
-    <div className="solve-grid">
-      <section className="solve-left">
-        <header className="problem-head">
-          <div>
-            <div className="problem-meta-top">
-              <span className="mono muted">#{problem.id}</span>
-              <DifficultyBadge level={problem.difficulty} />
-              <span className="chip chip-soft">{problem.category_name}</span>
-            </div>
-            <h1>{problem.title}</h1>
-            <div className="problem-limits">
-              <span>시간 제한 {problem.time_limit_seconds.toFixed(1)}초</span>
-              <span>메모리 {problem.memory_limit_mb}MB</span>
-              <span>Python</span>
-            </div>
+    <div className={`sv-shell ${popupMode ? "sv-shell-editor" : ""}`}>
+      <section className="sv-left">
+        <div className="sv-prob-hdr">
+          <div className="sv-pnum">
+            <span className="mono">#{problem.id}</span>
+            <DifficultyBadge level={problem.difficulty} />
+            <span className="chip">{problem.category_name}</span>
+          </div>
+          <div className="sv-ptitle">{problem.title}</div>
+          <div className="sv-plimits">
+            <span className="sv-plimit">시간 제한 {problem.time_limit_seconds.toFixed(1)}초</span>
+            <span className="sv-plimit">메모리 {problem.memory_limit_mb}MB</span>
+            <span className="sv-plimit">Python 3</span>
           </div>
           {user.role === "teacher" && (
-            <button className="btn btn-ghost btn-sm" onClick={onEditProblem}>
-              이 문제 수정
-            </button>
+            <div className="sv-prob-actions">
+              <button className="btn btn-ghost btn-sm" onClick={onEditProblem}>
+                이 문제 수정
+              </button>
+            </div>
           )}
-        </header>
+        </div>
 
-        <div className="tab-bar">
-          <button className={pane === "problem" ? "tab tab-active" : "tab"} onClick={() => setPane("problem")}>
+        <div className="sv-tabs">
+          <button className={pane === "problem" ? "sv-tab on" : "sv-tab"} onClick={() => setPane("problem")}>
             문제
           </button>
-          <button className={pane === "history" ? "tab tab-active" : "tab"} onClick={() => setPane("history")}>
+          <button className={pane === "history" ? "sv-tab on" : "sv-tab"} onClick={() => setPane("history")}>
             내 제출 ({submissions.length})
           </button>
         </div>
 
         {pane === "problem" && (
-          <div className="problem-body">
-            <Section title="문제 설명">{problem.statement}</Section>
-            <Section title="입력">{problem.input_description || "표준 입력을 사용합니다."}</Section>
-            <Section title="출력">{problem.output_description || "표준 출력으로 결과를 출력합니다."}</Section>
-            {problem.constraints && <Section title="제한">{problem.constraints}</Section>}
-
-            <div className="sample-grid">
-              <div>
-                <h3>예제 입력</h3>
-                <pre className="codeblock">{problem.sample_input || "예제가 없습니다."}</pre>
-              </div>
-              <div>
-                <h3>예제 출력</h3>
-                <pre className="codeblock">{problem.sample_output || "예제가 없습니다."}</pre>
-              </div>
-            </div>
-
-            {problem.public_testcases.length > 0 && (
-              <div>
-                <h3 className="section-title">공개 테스트</h3>
-                <div className="testcase-list">
-                  {problem.public_testcases.map((tc, i) => (
-                    <div key={i} className="testcase">
-                      <div className="testcase-head">
-                        <strong>테스트 {i + 1}</strong>
-                        <span className="muted">{tc.note || "공개"}</span>
-                      </div>
-                      <div className="testcase-grid">
-                        <pre className="codeblock">{tc.input_data}</pre>
-                        <pre className="codeblock">{tc.expected_output}</pre>
-                      </div>
-                    </div>
-                  ))}
+          <div className="sv-body">
+            <section className="sv-sec">
+              <div className="sv-seclabel">문제 설명</div>
+              <p>{problem.statement}</p>
+            </section>
+            <section className="sv-sec">
+              <div className="sv-seclabel">입력</div>
+              <p>{problem.input_description || "표준 입력을 사용합니다."}</p>
+            </section>
+            <section className="sv-sec">
+              <div className="sv-seclabel">출력</div>
+              <p>{problem.output_description || "표준 출력으로 결과를 출력합니다."}</p>
+            </section>
+            {problem.constraints && (
+              <section className="sv-sec">
+                <div className="sv-seclabel">제한사항</div>
+                <p>{problem.constraints}</p>
+              </section>
+            )}
+            <section className="sv-sec">
+              <div className="sv-seclabel">예제</div>
+              <div className="sv-sample">
+                <div className="sv-sblk">
+                  <div className="sv-sblk-label">입력</div>
+                  <pre className="sv-code">{problem.sample_input || "예제가 없습니다."}</pre>
+                </div>
+                <div className="sv-sblk">
+                  <div className="sv-sblk-label">출력</div>
+                  <pre className="sv-code">{problem.sample_output || "예제가 없습니다."}</pre>
                 </div>
               </div>
-            )}
-
-            {assignments.length > 0 && (
-              <div className="info-banner">
-                이 문제는 {assignments.length}개의 과제로 배정되어 있습니다.
+            </section>
+            {currentAssignment && (
+              <div className="sv-assigned">
+                이 문제는 "{currentAssignment.title}" 과제로 배정되어 있습니다.
               </div>
             )}
           </div>
         )}
 
         {pane === "history" && (
-          <div className="problem-body">
+          <div className="sv-hist">
             {submissions.length === 0 ? (
               <div className="empty">아직 이 문제에 대한 제출이 없습니다.</div>
             ) : (
-              <table className="data-table">
+              <table className="sv-hist-table">
                 <thead>
                   <tr>
                     <th>결과</th>
@@ -2691,7 +3189,7 @@ function SolveView(props: {
                   {submissions.map((s) => (
                     <tr
                       key={s.id}
-                      className={selectedSubmission?.id === s.id ? "submission-row-active" : ""}
+                      className={selectedSubmission?.id === s.id ? "sel" : ""}
                       onClick={() => setSelectedSubmissionId(s.id)}
                     >
                       <td>
@@ -2709,48 +3207,54 @@ function SolveView(props: {
             )}
 
             {selectedSubmission && (
-              <section className="submission-code-card">
-                <header className="submission-code-head">
+              <section>
+                <div className="sv-subcode-hdr">
                   <div>
                     <strong>제출 코드 보기</strong>
                     <p className="muted">{formatDate(selectedSubmission.created_at)}</p>
                   </div>
-                  <div className="submission-code-meta">
+                  <div className="sv-subcode-meta">
                     <StatusBadge status={selectedSubmission.status} />
                     <span className="mono muted">
                       {selectedSubmission.passed_tests}/{selectedSubmission.total_tests}
                     </span>
                   </div>
-                </header>
-                <pre className="codeblock submission-codeblock">{selectedSubmission.code}</pre>
+                </div>
+                <pre className="sv-subcode">{selectedSubmission.code}</pre>
               </section>
             )}
           </div>
         )}
       </section>
 
-      <section className="solve-right">
-        <header className="editor-head">
-          <strong>Python 에디터</strong>
-          <div className="editor-actions">
+      <section className="sv-right">
+        <div className="sv-ed-chrome">
+          <div className="sv-lang">
+            <span className="sv-langdot" />
+            Python 3
+          </div>
+          <div className="sv-ed-btns">
             {popupMode ? (
-              <button className="btn btn-ghost" onClick={() => window.close()}>
-                창 닫기
+              <button className="btn btn-g btn-sm" onClick={() => window.close()}>
+                탭 닫기
               </button>
             ) : (
-              <button className="btn btn-ghost" onClick={onOpenWindow}>
-                큰 창으로 열기
+              <button className="btn btn-g btn-sm" onClick={onOpenWindow}>
+                새 탭으로 열기
               </button>
             )}
-            <button className="btn btn-secondary" onClick={onRun} disabled={isRunning}>
+            <button className="btn btn-run btn-sm" onClick={onRun} disabled={isRunning}>
               {isRunning ? "실행 중..." : "예제 실행"}
             </button>
-            <button className="btn btn-primary" onClick={onSubmit} disabled={isRunning}>
+            <button className="btn btn-submit btn-sm" onClick={onSubmit} disabled={isRunning}>
               제출
             </button>
           </div>
-        </header>
-        <CodeEditor value={code} onChange={onChangeCode} />
+        </div>
+
+        <div className="sv-editor-surface">
+          <CodeEditor value={code} onChange={onChangeCode} />
+        </div>
 
         {stream && <GradingPanel stream={stream} isRunning={isRunning} />}
       </section>
@@ -2761,6 +3265,7 @@ function SolveView(props: {
 function AssignmentsView(props: {
   user: UserProfile;
   assignments: Assignment[];
+  teachers: UserProfile[];
   students: UserProfile[];
   problems: ProblemCard[];
   groups: AssignmentGroup[];
@@ -2769,6 +3274,12 @@ function AssignmentsView(props: {
   groupDetailLoading: boolean;
   onOpenGroup: (key: string) => void;
   onCloseGroup: () => void;
+  teacherCreateDraft: TeacherAccountDraft;
+  setTeacherCreateDraft: React.Dispatch<React.SetStateAction<TeacherAccountDraft>>;
+  studentCreateDraft: StudentAccountDraft;
+  setStudentCreateDraft: React.Dispatch<React.SetStateAction<StudentAccountDraft>>;
+  onCreateTeacher: (e: FormEvent) => void;
+  onCreateStudent: (e: FormEvent) => void;
   assignmentDraft: AssignmentDraft;
   setAssignmentDraft: React.Dispatch<React.SetStateAction<AssignmentDraft>>;
   onCreate: (e: FormEvent) => void;
@@ -2777,6 +3288,7 @@ function AssignmentsView(props: {
   const {
     user,
     assignments,
+    teachers,
     students,
     problems,
     groups,
@@ -2785,6 +3297,12 @@ function AssignmentsView(props: {
     groupDetailLoading,
     onOpenGroup,
     onCloseGroup,
+    teacherCreateDraft,
+    setTeacherCreateDraft,
+    studentCreateDraft,
+    setStudentCreateDraft,
+    onCreateTeacher,
+    onCreateStudent,
     assignmentDraft,
     setAssignmentDraft,
     onCreate,
@@ -2884,6 +3402,159 @@ function AssignmentsView(props: {
           </span>
         </div>
       </header>
+
+      <section className="card account-admin">
+        <header className="card-head">
+          <div>
+            <h2>계정 관리</h2>
+            <p className="muted">선생님 계정과 학생 계정은 로그인 후 여기서 직접 생성합니다.</p>
+          </div>
+          <div className="account-admin-summary">
+            <span className="summary-pill">
+              <span className="muted small">선생님</span>
+              <strong>{teachers.length}</strong>
+            </span>
+            <span className="summary-pill">
+              <span className="muted small">내 학생</span>
+              <strong>{students.length}</strong>
+            </span>
+          </div>
+        </header>
+
+        <div className="account-admin-grid">
+          <form className="account-card" onSubmit={onCreateTeacher}>
+            <div className="account-card-head">
+              <h3>선생님 추가</h3>
+              <span className="muted small">같은 메인 선생님 조직으로 묶입니다.</span>
+            </div>
+            <div className="grid-2">
+              <label>
+                <span>이름</span>
+                <input
+                  value={teacherCreateDraft.display_name}
+                  onChange={(e) => setTeacherCreateDraft((current) => ({ ...current, display_name: e.target.value }))}
+                  placeholder="예: 김선생"
+                />
+              </label>
+              <label>
+                <span>아이디</span>
+                <input
+                  value={teacherCreateDraft.username}
+                  onChange={(e) => setTeacherCreateDraft((current) => ({ ...current, username: e.target.value }))}
+                  placeholder="teacher_kim"
+                />
+              </label>
+            </div>
+            <label>
+              <span>비밀번호</span>
+              <input
+                type="password"
+                value={teacherCreateDraft.password}
+                onChange={(e) => setTeacherCreateDraft((current) => ({ ...current, password: e.target.value }))}
+                placeholder="초기 비밀번호"
+              />
+            </label>
+            <button className="btn btn-secondary" type="submit">
+              선생님 계정 생성
+            </button>
+          </form>
+
+          <form className="account-card" onSubmit={onCreateStudent}>
+            <div className="account-card-head">
+              <h3>학생 추가</h3>
+              <span className="muted small">반 이름은 현재 로그인한 선생님이 만든 학생끼리만 같은 반으로 묶입니다.</span>
+            </div>
+            <div className="grid-2">
+              <label>
+                <span>이름</span>
+                <input
+                  value={studentCreateDraft.display_name}
+                  onChange={(e) => setStudentCreateDraft((current) => ({ ...current, display_name: e.target.value }))}
+                  placeholder="예: 홍길동"
+                />
+              </label>
+              <label>
+                <span>아이디</span>
+                <input
+                  value={studentCreateDraft.username}
+                  onChange={(e) => setStudentCreateDraft((current) => ({ ...current, username: e.target.value }))}
+                  placeholder="student_hong"
+                />
+              </label>
+            </div>
+            <div className="grid-2">
+              <label>
+                <span>비밀번호</span>
+                <input
+                  type="password"
+                  value={studentCreateDraft.password}
+                  onChange={(e) => setStudentCreateDraft((current) => ({ ...current, password: e.target.value }))}
+                  placeholder="초기 비밀번호"
+                />
+              </label>
+              <label>
+                <span>반 이름</span>
+                <input
+                  value={studentCreateDraft.class_name}
+                  onChange={(e) => setStudentCreateDraft((current) => ({ ...current, class_name: e.target.value }))}
+                  placeholder="예: 토11시 / 금2시"
+                />
+              </label>
+            </div>
+            <button className="btn btn-primary" type="submit">
+              학생 계정 생성
+            </button>
+          </form>
+        </div>
+
+        <div className="account-admin-grid">
+          <div className="account-list-card">
+            <div className="account-card-head">
+              <h3>선생님 목록</h3>
+              <span className="muted small">메인 선생님과 추가 선생님을 함께 표시합니다.</span>
+            </div>
+            {teachers.length === 0 ? (
+              <p className="empty-inline">등록된 선생님이 없습니다.</p>
+            ) : (
+              <ul className="account-list">
+                {teachers.map((teacher) => (
+                  <li key={teacher.id} className="account-list-item">
+                    <div className="account-list-main">
+                      <strong>{teacher.display_name}</strong>
+                      <span className="muted small">@{teacher.username}</span>
+                    </div>
+                    <span className={teacher.is_primary_teacher ? "verdict verdict-ok" : "verdict verdict-neutral"}>
+                      {teacher.is_primary_teacher ? "메인 선생님" : "추가 선생님"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="account-list-card">
+            <div className="account-card-head">
+              <h3>내가 만든 학생</h3>
+              <span className="muted small">같은 반 이름도 현재 선생님 기준으로만 묶입니다.</span>
+            </div>
+            {students.length === 0 ? (
+              <p className="empty-inline">아직 만든 학생이 없습니다.</p>
+            ) : (
+              <ul className="account-list">
+                {students.slice(0, 8).map((student) => (
+                  <li key={student.id} className="account-list-item">
+                    <div className="account-list-main">
+                      <strong>{student.display_name}</strong>
+                      <span className="muted small">@{student.username}</span>
+                    </div>
+                    <span className="class-chip">{student.class_name ?? "반 미지정"}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </section>
 
       <form className="card assign-form" onSubmit={onCreate}>
         <header className="card-head">
@@ -3198,30 +3869,32 @@ function ManageView(props: {
   const tcValid = filledCount >= 10 && filledCount <= 50;
 
   function addEmpty(n: number) {
-    setProblemForm((c) => ({
-      ...c,
-      testcases: [...c.testcases, ...Array.from({ length: n }, emptyTestcase)],
+    setProblemForm((current) => ({
+      ...current,
+      testcases: [...current.testcases, ...Array.from({ length: n }, emptyTestcase)],
     }));
   }
 
   function removeEmpty() {
-    setProblemForm((c) => {
-      const kept = c.testcases.filter((tc) => tc.input_data.trim() || tc.expected_output.trim());
-      return { ...c, testcases: kept.length > 0 ? kept : [emptyTestcase()] };
+    setProblemForm((current) => {
+      const kept = current.testcases.filter((tc) => tc.input_data.trim() || tc.expected_output.trim());
+      return { ...current, testcases: kept.length > 0 ? kept : [emptyTestcase()] };
     });
   }
 
   function updateTestcase(index: number, patch: Partial<TestCase>) {
-    setProblemForm((c) => ({
-      ...c,
-      testcases: c.testcases.map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    setProblemForm((current) => ({
+      ...current,
+      testcases: current.testcases.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, ...patch } : item,
+      ),
     }));
   }
 
   function deleteTestcase(index: number) {
-    setProblemForm((c) => {
-      const next = c.testcases.filter((_, i) => i !== index);
-      return { ...c, testcases: next.length > 0 ? next : [emptyTestcase()] };
+    setProblemForm((current) => {
+      const next = current.testcases.filter((_, itemIndex) => itemIndex !== index);
+      return { ...current, testcases: next.length > 0 ? next : [emptyTestcase()] };
     });
   }
 
@@ -3232,7 +3905,7 @@ function ManageView(props: {
       setBulkError("붙여넣을 내용이 없습니다.");
       return;
     }
-    const blocks = trimmed.split(/^===+\s*$/m).map((b) => b.trim()).filter(Boolean);
+    const blocks = trimmed.split(/^===+\s*$/m).map((block) => block.trim()).filter(Boolean);
     const parsed: TestCase[] = [];
     for (const block of blocks) {
       const parts = block.split(/^@@+\s*$/m);
@@ -3251,24 +3924,22 @@ function ManageView(props: {
       setBulkError("추가할 테스트케이스가 없습니다.");
       return;
     }
-    setProblemForm((c) => {
-      const kept = c.testcases.filter((tc) => tc.input_data.trim() || tc.expected_output.trim());
-      return { ...c, testcases: [...kept, ...parsed] };
+    setProblemForm((current) => {
+      const kept = current.testcases.filter((tc) => tc.input_data.trim() || tc.expected_output.trim());
+      return { ...current, testcases: [...kept, ...parsed] };
     });
     setBulkText("");
     setBulkOpen(false);
   }
 
   return (
-    <form className="manage-form" onSubmit={onSubmit}>
-      <header className="manage-head">
+    <form className="manage-form mv-root" onSubmit={onSubmit}>
+      <header className="mv-header">
         <div>
           <h1>{mode === "edit" ? "문제 수정" : "새 문제 만들기"}</h1>
-          <p className="muted">
-            필수 항목만 채워도 바로 출제할 수 있어요. 세부 설정은 아래 고급 설정에서 조정하세요.
-          </p>
+          <p>필수 입력만 채워도 저장할 수 있고, 테스트케이스는 최소 10개 이상 준비되면 바로 출제할 수 있어요.</p>
         </div>
-        <div className="form-actions">
+        <div className="mv-header-actions">
           <button type="button" className="btn btn-ghost btn-sm" onClick={onReset}>
             처음부터 작성
           </button>
@@ -3278,271 +3949,299 @@ function ManageView(props: {
         </div>
       </header>
 
-      <section className="manage-block">
-        <h2 className="manage-block-title">1. 기본 정보</h2>
-        <div className="grid-2">
-          <label>
-            <span>문제 제목 *</span>
+      <section className="mv-card">
+        <div className="mv-section-title">
+          <span className="mv-step">1</span>
+          <span>기본 정보</span>
+        </div>
+        <div className="mv-grid-2">
+          <label className="mv-field">
+            <span className="mv-label">문제 제목 *</span>
             <input
               placeholder="예: 숫자 뒤집기"
               value={problemForm.title}
-              onChange={(e) => setProblemForm((c) => ({ ...c, title: e.target.value }))}
+              onChange={(e) => setProblemForm((current) => ({ ...current, title: e.target.value }))}
             />
           </label>
-          <label>
-            <span>한 줄 설명 *</span>
+          <label className="mv-field">
+            <span className="mv-label">한 줄 설명 *</span>
             <input
-              placeholder="목록에 표시될 짧은 설명"
+              placeholder="목록 카드에 보일 짧은 설명"
               value={problemForm.short_description}
-              onChange={(e) => setProblemForm((c) => ({ ...c, short_description: e.target.value }))}
+              onChange={(e) =>
+                setProblemForm((current) => ({ ...current, short_description: e.target.value }))
+              }
             />
           </label>
         </div>
-        <div className="grid-3">
-          <label>
-            <span>분류</span>
+        <div className="mv-grid-3">
+          <label className="mv-field">
+            <span className="mv-label">분류</span>
             <select
               value={problemForm.category_id}
-              onChange={(e) => setProblemForm((c) => ({ ...c, category_id: Number(e.target.value) }))}
+              onChange={(e) =>
+                setProblemForm((current) => ({ ...current, category_id: Number(e.target.value) }))
+              }
             >
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
                 </option>
               ))}
             </select>
           </label>
-          <label>
-            <span>난이도</span>
+          <label className="mv-field">
+            <span className="mv-label">난이도</span>
             <select
               value={problemForm.difficulty}
-              onChange={(e) => setProblemForm((c) => ({ ...c, difficulty: e.target.value as Difficulty }))}
+              onChange={(e) =>
+                setProblemForm((current) => ({ ...current, difficulty: e.target.value as Difficulty }))
+              }
             >
               <option value="beginner">입문</option>
               <option value="basic">기초</option>
               <option value="intermediate">응용</option>
             </select>
           </label>
-          <label>
-            <span>시간 제한 (초)</span>
+          <label className="mv-field">
+            <span className="mv-label">시간 제한 (초)</span>
             <input
               type="number"
               step="0.1"
               min="0.1"
               value={problemForm.time_limit_seconds}
               onChange={(e) =>
-                setProblemForm((c) => ({ ...c, time_limit_seconds: Number(e.target.value) }))
+                setProblemForm((current) => ({ ...current, time_limit_seconds: Number(e.target.value) }))
               }
             />
           </label>
         </div>
       </section>
 
-      <section className="manage-block">
-        <h2 className="manage-block-title">2. 문제 내용</h2>
-        <label>
-          <span>문제 설명 *</span>
+      <section className="mv-card">
+        <div className="mv-section-title">
+          <span className="mv-step">2</span>
+          <span>문제 내용</span>
+        </div>
+        <label className="mv-field">
+          <span className="mv-label">문제 설명 *</span>
           <textarea
             rows={7}
             placeholder="문제가 요구하는 바를 자세히 적어주세요."
             value={problemForm.statement}
-            onChange={(e) => setProblemForm((c) => ({ ...c, statement: e.target.value }))}
+            onChange={(e) => setProblemForm((current) => ({ ...current, statement: e.target.value }))}
           />
         </label>
-        <div className="grid-2">
-          <label>
-            <span>예제 입력</span>
+        <div className="mv-grid-2">
+          <label className="mv-field">
+            <span className="mv-label">예제 입력</span>
             <textarea
               rows={4}
               value={problemForm.sample_input}
-              onChange={(e) => setProblemForm((c) => ({ ...c, sample_input: e.target.value }))}
+              onChange={(e) => setProblemForm((current) => ({ ...current, sample_input: e.target.value }))}
             />
           </label>
-          <label>
-            <span>예제 출력</span>
+          <label className="mv-field">
+            <span className="mv-label">예제 출력</span>
             <textarea
               rows={4}
               value={problemForm.sample_output}
-              onChange={(e) => setProblemForm((c) => ({ ...c, sample_output: e.target.value }))}
+              onChange={(e) => setProblemForm((current) => ({ ...current, sample_output: e.target.value }))}
             />
           </label>
         </div>
+
+        <details className="mv-advanced">
+          <summary>고급 설정 (입출력 설명, 제한사항, 스타터 코드, 메모리)</summary>
+          <div className="mv-advanced-body">
+            <div className="mv-grid-2">
+              <label className="mv-field">
+                <span className="mv-label">입력 형식 설명</span>
+                <textarea
+                  rows={3}
+                  value={problemForm.input_description}
+                  onChange={(e) =>
+                    setProblemForm((current) => ({ ...current, input_description: e.target.value }))
+                  }
+                />
+              </label>
+              <label className="mv-field">
+                <span className="mv-label">출력 형식 설명</span>
+                <textarea
+                  rows={3}
+                  value={problemForm.output_description}
+                  onChange={(e) =>
+                    setProblemForm((current) => ({ ...current, output_description: e.target.value }))
+                  }
+                />
+              </label>
+            </div>
+            <label className="mv-field">
+              <span className="mv-label">제한사항</span>
+              <textarea
+                rows={2}
+                placeholder="예: 1 ≤ N ≤ 1,000,000"
+                value={problemForm.constraints}
+                onChange={(e) => setProblemForm((current) => ({ ...current, constraints: e.target.value }))}
+              />
+            </label>
+            <div className="mv-grid-2">
+              <label className="mv-field">
+                <span className="mv-label">스타터 코드 (Python)</span>
+                <textarea
+                  rows={4}
+                  value={problemForm.starter_code_python}
+                  onChange={(e) =>
+                    setProblemForm((current) => ({ ...current, starter_code_python: e.target.value }))
+                  }
+                />
+              </label>
+              <label className="mv-field">
+                <span className="mv-label">메모리 제한 (MB)</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={problemForm.memory_limit_mb}
+                  onChange={(e) =>
+                    setProblemForm((current) => ({ ...current, memory_limit_mb: Number(e.target.value) }))
+                  }
+                />
+              </label>
+            </div>
+          </div>
+        </details>
       </section>
 
-      <details className="manage-advanced">
-        <summary>고급 설정 (입출력 설명, 제한사항, 스타터 코드, 메모리)</summary>
-        <div className="grid-2">
-          <label>
-            <span>입력 형식 설명</span>
-            <textarea
-              rows={3}
-              value={problemForm.input_description}
-              onChange={(e) => setProblemForm((c) => ({ ...c, input_description: e.target.value }))}
-            />
-          </label>
-          <label>
-            <span>출력 형식 설명</span>
-            <textarea
-              rows={3}
-              value={problemForm.output_description}
-              onChange={(e) => setProblemForm((c) => ({ ...c, output_description: e.target.value }))}
-            />
-          </label>
-        </div>
-        <label>
-          <span>제한사항</span>
-          <textarea
-            rows={2}
-            placeholder="예: 1 ≤ N ≤ 1,000,000"
-            value={problemForm.constraints}
-            onChange={(e) => setProblemForm((c) => ({ ...c, constraints: e.target.value }))}
-          />
-        </label>
-        <div className="grid-2">
-          <label>
-            <span>스타터 코드 (Python)</span>
-            <textarea
-              rows={4}
-              value={problemForm.starter_code_python}
-              onChange={(e) => setProblemForm((c) => ({ ...c, starter_code_python: e.target.value }))}
-            />
-          </label>
-          <label>
-            <span>메모리 제한 (MB)</span>
-            <input
-              type="number"
-              value={problemForm.memory_limit_mb}
-              onChange={(e) => setProblemForm((c) => ({ ...c, memory_limit_mb: Number(e.target.value) }))}
-            />
-          </label>
-        </div>
-      </details>
-
-      <section className="manage-block">
-        <div className="tc-head-row">
-          <div>
-            <h2 className="manage-block-title">3. 채점 테스트케이스</h2>
-            <p className="muted small">
-              엣지 케이스를 포함해 <strong>최소 10개, 최대 50개</strong>를 입력하세요.
-            </p>
+      <section className="mv-card">
+        <div className="tc-section">
+          <div className="tc-top">
+            <div className="tc-top-left">
+              <div className="mv-section-title tc-title">
+                <span className="mv-step">3</span>
+                <span>채점 테스트케이스</span>
+              </div>
+              <p className="mv-hint">
+                엣지 케이스를 포함해 <strong>최소 10개, 최대 50개</strong>까지 입력하세요.
+              </p>
+            </div>
+            <div className={`tc-counter ${tcValid ? "tc-counter-ok" : "tc-counter-bad"}`}>
+              <strong>{filledCount}</strong>
+              <span>/ 10-50</span>
+            </div>
           </div>
-          <div className={`tc-counter ${tcValid ? "tc-counter-ok" : "tc-counter-bad"}`}>
-            <strong>{filledCount}</strong>
-            <span className="muted"> / 10–50</span>
+
+          <div className="tc-toolbar">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => addEmpty(1)}>
+              + 1개
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => addEmpty(5)}>
+              + 5개
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => addEmpty(10)}>
+              + 10개
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${bulkOpen ? "btn-primary" : "btn-ghost"}`}
+              onClick={() => setBulkOpen((open) => !open)}
+            >
+              {bulkOpen ? "일괄 입력 닫기" : "일괄 붙여넣기"}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={removeEmpty}>
+              빈 칸 정리
+            </button>
           </div>
-        </div>
 
-        <div className="tc-toolbar">
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => addEmpty(1)}>
-            + 1개 추가
-          </button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => addEmpty(5)}>
-            + 5개 추가
-          </button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => addEmpty(10)}>
-            + 10개 추가
-          </button>
-          <button
-            type="button"
-            className={`btn btn-sm ${bulkOpen ? "btn-secondary" : "btn-ghost"}`}
-            onClick={() => setBulkOpen((o) => !o)}
-          >
-            {bulkOpen ? "일괄 입력 닫기" : "일괄 입력 / 붙여넣기"}
-          </button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={removeEmpty}>
-            빈 칸 정리
-          </button>
-        </div>
-
-        {bulkOpen && (
-          <div className="bulk-editor">
-            <p className="muted small">
-              각 테스트는 <code>===</code>로 구분하고, 한 테스트 안에서 입력과 기대 출력은 <code>@@</code>로 구분합니다.
-              예시:
-            </p>
-            <pre className="bulk-example">{`3 4
+          {bulkOpen && (
+            <div className="bulk-box">
+              <p className="mv-hint">
+                각 테스트는 <code>===</code>로 구분하고, 입력과 기대 출력은 <code>@@</code>로 나눠주세요.
+              </p>
+              <pre className="bulk-example">{`3 4
 @@
 7
 ===
 10 20
 @@
-30
-===
-0 0
-@@
-0`}</pre>
-            <textarea
-              rows={8}
-              placeholder="여러 테스트케이스를 한 번에 붙여넣기"
-              value={bulkText}
-              onChange={(e) => setBulkText(e.target.value)}
-            />
-            {bulkError && <p className="bad small">{bulkError}</p>}
-            <div className="form-actions">
-              <button type="button" className="btn btn-primary btn-sm" onClick={applyBulk}>
-                파싱해서 추가
-              </button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBulkText("")}>
-                지우기
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="tc-compact-list">
-          {problemForm.testcases.map((tc, index) => (
-            <div key={index} className="tc-compact">
-              <div className="tc-compact-head">
-                <span className="tc-compact-num mono">#{index + 1}</span>
-                <input
-                  className="tc-compact-note"
-                  placeholder="메모 (예: 엣지 - 최대값)"
-                  value={tc.note}
-                  onChange={(e) => updateTestcase(index, { note: e.target.value })}
-                />
-                <label className="inline-check">
-                  <input
-                    type="checkbox"
-                    checked={tc.is_public}
-                    onChange={(e) => updateTestcase(index, { is_public: e.target.checked })}
-                  />
-                  <span>공개</span>
-                </label>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm tc-delete"
-                  onClick={() => deleteTestcase(index)}
-                  aria-label="삭제"
-                >
-                  ×
+30`}</pre>
+              <textarea
+                rows={7}
+                placeholder="여러 테스트케이스를 한 번에 붙여넣기"
+                value={bulkText}
+                onChange={(e) => setBulkText(e.target.value)}
+              />
+              {bulkError && <p className="bulk-error">{bulkError}</p>}
+              <div className="mv-header-actions">
+                <button type="button" className="btn btn-primary btn-sm" onClick={applyBulk}>
+                  테스트 추가
+                </button>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBulkText("")}>
+                  지우기
                 </button>
               </div>
-              <div className="tc-compact-io">
-                <textarea
-                  className="tc-compact-input"
-                  rows={3}
-                  placeholder="입력"
-                  value={tc.input_data}
-                  onChange={(e) => updateTestcase(index, { input_data: e.target.value })}
-                />
-                <textarea
-                  className="tc-compact-output"
-                  rows={3}
-                  placeholder="기대 출력"
-                  value={tc.expected_output}
-                  onChange={(e) => updateTestcase(index, { expected_output: e.target.value })}
-                />
-              </div>
             </div>
-          ))}
+          )}
+
+          <div className="tc-list">
+            {problemForm.testcases.length === 0 && (
+              <div className="empty-state">테스트케이스가 없습니다. 위에서 먼저 추가해 주세요.</div>
+            )}
+            {problemForm.testcases.map((tc, index) => (
+              <div key={index} className="tc-item">
+                <div className="tc-item-head">
+                  <span className="tc-item-num mono">#{index + 1}</span>
+                  <input
+                    className="tc-item-note"
+                    placeholder="메모 (예: 엣지 케이스)"
+                    value={tc.note}
+                    onChange={(e) => updateTestcase(index, { note: e.target.value })}
+                  />
+                  <label className="tc-pub">
+                    <input
+                      type="checkbox"
+                      checked={tc.is_public}
+                      onChange={(e) => updateTestcase(index, { is_public: e.target.checked })}
+                    />
+                    공개
+                  </label>
+                  <button
+                    type="button"
+                    className="tc-del"
+                    onClick={() => deleteTestcase(index)}
+                    aria-label="테스트케이스 삭제"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="tc-io-labels">
+                  <div className="tc-io-label">입력</div>
+                  <div className="tc-io-label">기대 출력</div>
+                </div>
+                <div className="tc-io">
+                  <textarea
+                    rows={3}
+                    placeholder="입력"
+                    value={tc.input_data}
+                    onChange={(e) => updateTestcase(index, { input_data: e.target.value })}
+                  />
+                  <textarea
+                    rows={3}
+                    placeholder="기대 출력"
+                    value={tc.expected_output}
+                    onChange={(e) => updateTestcase(index, { expected_output: e.target.value })}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="form-actions-end">
+            <button type="submit" className="btn btn-primary" disabled={!tcValid}>
+              {tcValid ? (mode === "edit" ? "수정 저장" : "문제 등록") : `테스트 ${Math.max(0, 10 - filledCount)}개 더 필요`}
+            </button>
+          </div>
         </div>
       </section>
-
-      <div className="form-actions end">
-        <button type="submit" className="btn btn-primary" disabled={!tcValid}>
-          {mode === "edit" ? "수정 저장" : "문제 등록"}
-        </button>
-      </div>
     </form>
   );
 }
@@ -3551,83 +4250,89 @@ function GradingPanel({ stream, isRunning }: { stream: StreamState; isRunning: b
   const totalTests = Math.max(stream.total, stream.results.length);
   const overallPct = totalTests > 0 ? Math.round((stream.completed / totalTests) * 100) : 0;
   const slots = Array.from({ length: totalTests }, (_, index) => index);
-  const passedSoFar = stream.results.filter((r) => r.status === "passed").length;
-  const heading = stream.kind === "submit" ? "제출 채점" : "예제 실행";
-  const subheading = stream.done
-    ? stream.summary
-      ? `${statusLabel(stream.summary.status)} · ${stream.summary.passed_tests}/${stream.summary.total_tests} 통과`
-      : "완료"
-    : isRunning
-      ? `채점 중... ${stream.completed}/${stream.total || "?"}`
-      : "대기 중";
+  const finalTone = stream.done ? statusTone(stream.summary?.status ?? "") : "running";
+  const badgeTone = finalTone === "ok" ? "ok" : finalTone === "warn" ? "warn" : "bad";
 
   return (
-    <div className="grading-panel">
-      <header className="grading-header">
-        <div className="grading-header-main">
-          <strong>{heading}</strong>
+    <div className="sv-grade">
+      <div className="sv-ghead">
+        <div className="sv-gtitle">
           {stream.done && stream.summary ? (
-            <StatusBadge status={stream.summary.status} />
-          ) : (
-            <span className="grading-live">
-              <span className="live-dot" />
-              LIVE
+            <span className={`sv-dbadge sv-dbadge-${badgeTone}`}>
+              {statusLabel(stream.summary.status)}
             </span>
+          ) : (
+            <>
+              <span className="sv-ldot" />
+              <span>{stream.kind === "run" ? "예제 실행 중" : "채점 중"}</span>
+            </>
           )}
         </div>
-        <span className="muted mono">{subheading}</span>
-      </header>
-
-      <div className="overall-progress">
-        <div
-          className={`overall-progress-fill ${stream.done ? `progress-${statusTone(stream.summary?.status ?? "")}` : "progress-running"}`}
-          style={{ width: `${overallPct}%` }}
-        />
-        <span className="overall-progress-label mono">
-          {stream.completed}/{totalTests || "?"} · 통과 {passedSoFar}
-        </span>
+        <div className="sv-gsub mono">
+          {stream.completed}/{totalTests || "?"}
+        </div>
       </div>
 
-      <ul className="tc-progress-list">
+      <div className="sv-progress">
+        <div
+          className={`sv-pfill ${stream.done ? `sv-pfill-${badgeTone}` : "sv-pfill-run"}`}
+          style={{ width: `${overallPct}%` }}
+        />
+      </div>
+
+      {stream.done && stream.summary && (
+        <div className="sv-summary">
+          <strong>
+            {stream.summary.passed_tests}/{stream.summary.total_tests} 테스트 통과
+          </strong>
+          <span className="sv-gsub">총 {stream.summary.runtime_ms}ms</span>
+        </div>
+      )}
+
+      <ul className="sv-tc-list">
         {slots.map((i) => {
           const r = stream.results.find((rr) => rr.index === i);
-          const tone = r ? statusTone(r.status) : "pending";
-          const pct = r ? 100 : 0;
+          const tone = r ? statusTone(r.status) : i === stream.completed && isRunning ? "running" : "pending";
           return (
-            <li key={i} className={`tc-progress-item tc-${tone}`}>
-              <div className="tc-progress-head">
-                <strong>테스트 {i + 1}</strong>
-                {r ? (
-                  <>
-                    <StatusBadge status={r.status} />
-                    <span className="muted mono">{r.runtime_ms}ms</span>
-                  </>
-                ) : i === stream.completed && isRunning ? (
-                  <span className="muted grading-live">
-                    <span className="live-dot" />
-                    채점 중
-                  </span>
-                ) : (
-                  <span className="muted">대기 중</span>
-                )}
-              </div>
-              <div className="tc-progress-bar">
-                <div
-                  className={`tc-progress-bar-fill ${r ? `progress-${tone}` : i === stream.completed && isRunning ? "progress-running" : ""}`}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-              {r && (r.expected || r.actual || r.stderr) && (
-                <div className="tc-progress-meta mono">
-                  {r.expected && <span>기댓값: {r.expected.split("\n").join(" / ")}</span>}
-                  {r.actual && <span>출력: {r.actual.split("\n").join(" / ")}</span>}
-                  {r.stderr && <span className="bad">에러: {r.stderr.split("\n").join(" / ")}</span>}
-                </div>
+            <li
+              key={i}
+              className={`sv-tcrow ${
+                tone === "ok" ? "sv-ok" : tone === "warn" ? "sv-warn" : tone === "bad" ? "sv-bad" : ""
+              }`}
+            >
+              <span className="sv-tcnum">테스트 {i + 1}</span>
+              {r ? (
+                <span>{statusLabel(r.status)}</span>
+              ) : i === stream.completed && isRunning ? (
+                <span>채점 중</span>
+              ) : (
+                <span>대기 중</span>
               )}
+              {r && <span className="sv-tcms">{r.runtime_ms}ms</span>}
             </li>
           );
         })}
       </ul>
+
+      {stream.results.some((r) => r.expected || r.actual || r.stderr) && (
+        <ul className="result-list">
+          {stream.results
+            .filter((r) => r.expected || r.actual || r.stderr)
+            .map((r) => (
+              <li key={r.index} className={`result-item result-${statusTone(r.status)}`}>
+                <div>
+                  <strong>테스트 {r.index + 1} 상세</strong>
+                  <span className="mono muted">{r.runtime_ms}ms</span>
+                </div>
+                <div className="result-meta mono">
+                  {r.expected && <span>기댓값: {r.expected.split("\n").join(" / ")}</span>}
+                  {r.actual && <span>출력: {r.actual.split("\n").join(" / ")}</span>}
+                  {r.stderr && <span className="bad">에러: {r.stderr.split("\n").join(" / ")}</span>}
+                </div>
+              </li>
+            ))}
+        </ul>
+      )}
     </div>
   );
 }

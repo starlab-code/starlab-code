@@ -74,6 +74,15 @@ _DEFAULT_ORIGINS = [
 @dataclass(frozen=True)
 class Settings:
     secret_key: str = field(default_factory=_resolve_secret_key)
+    primary_teacher_username: str = field(
+        default_factory=lambda: os.environ.get("STARLAB_PRIMARY_TEACHER_USERNAME", "main_teacher").strip() or "main_teacher"
+    )
+    primary_teacher_display_name: str = field(
+        default_factory=lambda: os.environ.get("STARLAB_PRIMARY_TEACHER_DISPLAY_NAME", "메인 선생님").strip() or "메인 선생님"
+    )
+    primary_teacher_password: str = field(
+        default_factory=lambda: os.environ.get("STARLAB_PRIMARY_TEACHER_PASSWORD", "ChangeMe1234!")
+    )
     access_token_expire_minutes: int = field(
         default_factory=lambda: _get_int("STARLAB_TOKEN_MINUTES", 60 * 24)
     )

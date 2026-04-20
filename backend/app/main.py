@@ -2,10 +2,9 @@ import json
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import Session, select
 
 from . import auth, judge
@@ -31,6 +30,8 @@ from .models import (
     Submission,
     SubmissionFeedItem,
     SubmissionStatus,
+    StudentCreate,
+    TeacherCreate,
     TestCase,
     TestCaseRead,
     TestExecutionResult,
@@ -82,8 +83,65 @@ def to_user_read(user: User) -> UserRead:
         username=user.username,
         display_name=user.display_name,
         role=user.role,
+        primary_teacher_id=user.primary_teacher_id,
+        created_by_teacher_id=user.created_by_teacher_id,
+        is_primary_teacher=user.is_primary_teacher,
         class_name=user.class_name,
     )
+
+
+class LoginForm:
+    def __init__(
+        self,
+        username: str = Form(...),
+        password: str = Form(...),
+        role: Optional[UserRole] = Form(default=None),
+    ) -> None:
+        self.username = username
+        self.password = password
+        self.role = role
+
+
+def get_primary_teacher_id(user: User) -> int:
+    return user.primary_teacher_id or user.id
+
+
+def list_teachers_in_org(session: Session, current_user: User) -> List[User]:
+    primary_teacher_id = get_primary_teacher_id(current_user)
+    teachers = session.exec(
+        select(User).where(
+            User.role == UserRole.teacher,
+            User.primary_teacher_id == primary_teacher_id,
+        ).order_by(User.is_primary_teacher.desc(), User.display_name)
+    ).all()
+    return teachers
+
+
+def list_students_for_teacher(session: Session, current_user: User) -> List[User]:
+    return session.exec(
+        select(User).where(
+            User.role == UserRole.student,
+            User.created_by_teacher_id == current_user.id,
+        ).order_by(User.class_name, User.display_name)
+    ).all()
+
+
+def validate_account_fields(username: str, display_name: str, password: str) -> tuple[str, str]:
+    normalized_username = username.strip()
+    normalized_display_name = display_name.strip()
+    if not normalized_username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    if not normalized_display_name:
+        raise HTTPException(status_code=400, detail="Display name is required")
+    if not password.strip():
+        raise HTTPException(status_code=400, detail="Password is required")
+    return normalized_username, normalized_display_name
+
+
+def ensure_unique_username(session: Session, username: str) -> None:
+    existing = session.exec(select(User).where(User.username == username)).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already exists")
 
 
 def category_lookup(session: Session) -> Dict[int, Category]:
@@ -175,11 +233,8 @@ def result_to_response(result: judge.TestResult, is_public: bool) -> TestExecuti
 def root():
     return {
         "name": "Starlab Code MVP API",
-        "demo_accounts": (
-            [{"username": "teacher_demo", "password": "demo1234", "role": "teacher"}]
-            if settings.seed_demo_data
-            else []
-        ),
+        "seeded_primary_teacher_username": settings.primary_teacher_username,
+        "login_roles": [UserRole.teacher.value, UserRole.student.value],
     }
 
 
@@ -191,38 +246,18 @@ def health():
 
 @app.post("/auth/register", response_model=UserRead)
 def register(payload: UserCreate, session: Session = Depends(get_session)):
-    username = payload.username.strip()
-    display_name = payload.display_name.strip()
-    if not username:
-        raise HTTPException(status_code=400, detail="Username is required")
-    if not display_name:
-        raise HTTPException(status_code=400, detail="Display name is required")
-    if not payload.password.strip():
-        raise HTTPException(status_code=400, detail="Password is required")
-
-    class_name = normalize_class_name(payload.class_name, required=True)
-    existing = session.exec(select(User).where(User.username == username)).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Username already exists")
-
-    user = User(
-        username=username,
-        display_name=display_name,
-        hashed_password=auth.get_password_hash(payload.password),
-        role=UserRole.student,
-        class_name=class_name,
-    )
-    session.add(user)
-    session.commit()
-    session.refresh(user)
-    return to_user_read(user)
+    del payload, session
+    raise HTTPException(status_code=403, detail="Public registration is disabled. Teachers must create accounts.")
 
 
 @app.post("/auth/token", response_model=TokenResponse)
-def login(form_data: OAuth2PasswordRequestForm = Depends()):
+def login(form_data: LoginForm = Depends()):
     user = auth.authenticate_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(status_code=400, detail="Incorrect username or password")
+    if form_data.role and user.role != form_data.role:
+        role_label = "teacher" if form_data.role == UserRole.teacher else "student"
+        raise HTTPException(status_code=400, detail=f"This account is not allowed on the {role_label} login.")
 
     access_token = auth.create_access_token(data={"sub": user.username})
     return TokenResponse(access_token=access_token, user=to_user_read(user))
@@ -240,7 +275,17 @@ def dashboard(current_user: User = Depends(auth.get_current_user), session: Sess
 
     if current_user.role == UserRole.teacher:
         assignments = session.exec(select(Assignment).where(Assignment.teacher_id == current_user.id)).all()
-        accepted = session.exec(select(Submission).where(Submission.status == SubmissionStatus.accepted)).all()
+        student_ids = [student.id for student in list_students_for_teacher(session, current_user)]
+        accepted = (
+            session.exec(
+                select(Submission).where(
+                    Submission.status == SubmissionStatus.accepted,
+                    Submission.user_id.in_(student_ids),
+                )
+            ).all()
+            if student_ids
+            else []
+        )
         return DashboardSummary(
             assigned_count=len(assignments),
             completed_count=len(accepted),
@@ -269,10 +314,11 @@ def list_categories(session: Session = Depends(get_session)):
 
 
 @app.get("/classrooms", response_model=List[ClassroomSummary])
-def list_classrooms(session: Session = Depends(get_session)):
-    students = session.exec(
-        select(User).where(User.role == UserRole.student).order_by(User.class_name, User.display_name)
-    ).all()
+def list_classrooms(
+    current_user: User = Depends(auth.require_teacher),
+    session: Session = Depends(get_session),
+):
+    students = list_students_for_teacher(session, current_user)
     counts: Dict[str, int] = {}
     for student in students:
         class_name = normalize_class_name(student.class_name)
@@ -287,9 +333,67 @@ def list_students(
     current_user: User = Depends(auth.require_teacher),
     session: Session = Depends(get_session),
 ):
-    del current_user
-    students = session.exec(select(User).where(User.role == UserRole.student).order_by(User.display_name)).all()
+    students = list_students_for_teacher(session, current_user)
     return [to_user_read(student) for student in students]
+
+
+@app.get("/teachers", response_model=List[UserRead])
+def list_teachers(
+    current_user: User = Depends(auth.require_teacher),
+    session: Session = Depends(get_session),
+):
+    teachers = list_teachers_in_org(session, current_user)
+    return [to_user_read(teacher) for teacher in teachers]
+
+
+@app.post("/users/teachers", response_model=UserRead)
+def create_teacher_account(
+    payload: TeacherCreate,
+    current_user: User = Depends(auth.require_teacher),
+    session: Session = Depends(get_session),
+):
+    username, display_name = validate_account_fields(payload.username, payload.display_name, payload.password)
+    ensure_unique_username(session, username)
+
+    teacher = User(
+        username=username,
+        display_name=display_name,
+        hashed_password=auth.get_password_hash(payload.password),
+        role=UserRole.teacher,
+        primary_teacher_id=get_primary_teacher_id(current_user),
+        created_by_teacher_id=current_user.id,
+        is_primary_teacher=False,
+    )
+    session.add(teacher)
+    session.commit()
+    session.refresh(teacher)
+    return to_user_read(teacher)
+
+
+@app.post("/users/students", response_model=UserRead)
+def create_student_account(
+    payload: StudentCreate,
+    current_user: User = Depends(auth.require_teacher),
+    session: Session = Depends(get_session),
+):
+    username, display_name = validate_account_fields(payload.username, payload.display_name, payload.password)
+    ensure_unique_username(session, username)
+    class_name = normalize_class_name(payload.class_name, required=True)
+
+    student = User(
+        username=username,
+        display_name=display_name,
+        hashed_password=auth.get_password_hash(payload.password),
+        role=UserRole.student,
+        class_name=class_name,
+        primary_teacher_id=get_primary_teacher_id(current_user),
+        created_by_teacher_id=current_user.id,
+        is_primary_teacher=False,
+    )
+    session.add(student)
+    session.commit()
+    session.refresh(student)
+    return to_user_read(student)
 
 
 @app.get("/problems", response_model=List[ProblemCard])
@@ -461,6 +565,7 @@ def create_assignments(
             select(User).where(
                 User.role == UserRole.student,
                 User.class_name == resolved_class_name,
+                User.created_by_teacher_id == current_user.id,
             )
         ).all()
         if not class_students:
@@ -474,7 +579,11 @@ def create_assignments(
     created_assignments: List[Assignment] = []
     for student_id in target_student_ids:
         student = session.get(User, student_id)
-        if not student or student.role != UserRole.student:
+        if (
+            not student
+            or student.role != UserRole.student
+            or student.created_by_teacher_id != current_user.id
+        ):
             continue
         assignment = Assignment(
             title=payload.title,
@@ -761,6 +870,11 @@ def list_submissions(
     statement = select(Submission)
     if current_user.role == UserRole.student:
         statement = statement.where(Submission.user_id == current_user.id)
+    else:
+        teacher_student_ids = [student.id for student in list_students_for_teacher(session, current_user)]
+        if not teacher_student_ids:
+            return []
+        statement = statement.where(Submission.user_id.in_(teacher_student_ids))
     if problem_id:
         statement = statement.where(Submission.problem_id == problem_id)
     submissions = session.exec(statement.order_by(Submission.created_at.desc())).all()
@@ -774,10 +888,13 @@ def submission_feed(
     current_user: User = Depends(auth.require_teacher),
     session: Session = Depends(get_session),
 ):
-    del current_user
+    teacher_student_ids = [student.id for student in list_students_for_teacher(session, current_user)]
+    if not teacher_student_ids:
+        return []
     statement = select(Submission)
     if since_id is not None:
         statement = statement.where(Submission.id > since_id)
+    statement = statement.where(Submission.user_id.in_(teacher_student_ids))
     submissions = session.exec(statement.order_by(Submission.created_at.desc()).limit(limit)).all()
     if not submissions:
         return []

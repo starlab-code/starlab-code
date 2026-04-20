@@ -35,6 +35,9 @@ class User(SQLModel, table=True):
     display_name: str
     hashed_password: str
     role: UserRole = Field(default=UserRole.student)
+    primary_teacher_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+    created_by_teacher_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+    is_primary_teacher: bool = Field(default=False)
     class_name: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -108,11 +111,27 @@ class UserCreate(SQLModel):
     class_name: Optional[str] = None
 
 
+class TeacherCreate(SQLModel):
+    username: str
+    display_name: str
+    password: str
+
+
+class StudentCreate(SQLModel):
+    username: str
+    display_name: str
+    password: str
+    class_name: str
+
+
 class UserRead(SQLModel):
     id: int
     username: str
     display_name: str
     role: UserRole
+    primary_teacher_id: Optional[int] = None
+    created_by_teacher_id: Optional[int] = None
+    is_primary_teacher: bool = False
     class_name: Optional[str] = None
 
 
