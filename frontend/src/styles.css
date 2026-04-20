@@ -1999,6 +1999,28 @@ h3 { font-size: 0.95rem; font-weight: 700; }
   font-weight: 700;
 }
 
+.accounts-tabs {
+  max-width: 420px;
+}
+.account-class-stack {
+  display: grid;
+  gap: 1rem;
+}
+.account-class-group {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid #edf1f7;
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+.account-class-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .assign-form .assign-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

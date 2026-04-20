@@ -1539,6 +1539,7 @@ export default function App() {
     { key: "submissions", label: "내 제출", show: user.role === "student" },
     { key: "live", label: "실시간 채점", show: user.role === "teacher" },
     { key: "manage", label: "문제 관리", show: user.role === "teacher" },
+    { key: "accounts", label: "계정 관리", show: user.role === "teacher" },
   ];
 
   return (
@@ -1675,7 +1676,6 @@ export default function App() {
           <AssignmentsView
             user={user}
             assignments={assignments}
-            teachers={teachers}
             students={students}
             problems={problems}
             groups={assignmentGroups}
@@ -1684,16 +1684,23 @@ export default function App() {
             groupDetailLoading={groupDetailLoading}
             onOpenGroup={openGroupDetail}
             onCloseGroup={closeGroupDetail}
+            assignmentDraft={assignmentDraft}
+            setAssignmentDraft={setAssignmentDraft}
+            onCreate={createAssignments}
+            onOpenProblem={openProblem}
+          />
+        )}
+
+        {view === "accounts" && user.role === "teacher" && (
+          <AccountsView
+            teachers={teachers}
+            students={students}
             teacherCreateDraft={teacherCreateDraft}
             setTeacherCreateDraft={setTeacherCreateDraft}
             studentCreateDraft={studentCreateDraft}
             setStudentCreateDraft={setStudentCreateDraft}
             onCreateTeacher={handleCreateTeacher}
             onCreateStudent={handleCreateStudent}
-            assignmentDraft={assignmentDraft}
-            setAssignmentDraft={setAssignmentDraft}
-            onCreate={createAssignments}
-            onOpenProblem={openProblem}
           />
         )}
 
@@ -3262,10 +3269,265 @@ function SolveView(props: {
   );
 }
 
+function AccountsView(props: {
+  teachers: UserProfile[];
+  students: UserProfile[];
+  teacherCreateDraft: TeacherAccountDraft;
+  setTeacherCreateDraft: React.Dispatch<React.SetStateAction<TeacherAccountDraft>>;
+  studentCreateDraft: StudentAccountDraft;
+  setStudentCreateDraft: React.Dispatch<React.SetStateAction<StudentAccountDraft>>;
+  onCreateTeacher: (e: FormEvent) => void;
+  onCreateStudent: (e: FormEvent) => void;
+}) {
+  const {
+    teachers,
+    students,
+    teacherCreateDraft,
+    setTeacherCreateDraft,
+    studentCreateDraft,
+    setStudentCreateDraft,
+    onCreateTeacher,
+    onCreateStudent,
+  } = props;
+
+  const [activeTab, setActiveTab] = useState<"teacher" | "student">("teacher");
+
+  const studentsByClass = useMemo(() => {
+    const map = new Map<string, UserProfile[]>();
+    for (const student of students) {
+      const key = (student.class_name ?? "").trim() || "반 미지정";
+      const bucket = map.get(key) ?? [];
+      bucket.push(student);
+      map.set(key, bucket);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [students]);
+
+  return (
+    <div className="page-stack list-page">
+      <header className="page-head page-head-tight">
+        <div>
+          <h1>계정 관리</h1>
+          <p className="muted">
+            선생님 계정과 학생 계정을 탭에서 따로 관리할 수 있어요. 같은 메인 선생님으로 묶인 조직만 노출됩니다.
+          </p>
+        </div>
+        <div className="account-admin-summary">
+          <span className="summary-pill">
+            <span className="muted small">선생님</span>
+            <strong>{teachers.length}</strong>
+          </span>
+          <span className="summary-pill">
+            <span className="muted small">내 학생</span>
+            <strong>{students.length}</strong>
+          </span>
+        </div>
+      </header>
+
+      <div className="auth-role-tabs accounts-tabs">
+        <button
+          type="button"
+          className={activeTab === "teacher" ? "auth-role-tab auth-role-tab-active" : "auth-role-tab"}
+          onClick={() => setActiveTab("teacher")}
+        >
+          선생님 계정 ({teachers.length})
+        </button>
+        <button
+          type="button"
+          className={activeTab === "student" ? "auth-role-tab auth-role-tab-active" : "auth-role-tab"}
+          onClick={() => setActiveTab("student")}
+        >
+          학생 계정 ({students.length})
+        </button>
+      </div>
+
+      {activeTab === "teacher" && (
+        <section className="card account-admin">
+          <header className="card-head">
+            <div>
+              <h2>선생님 계정</h2>
+              <p className="muted">추가한 선생님은 같은 메인 선생님 조직으로 묶입니다.</p>
+            </div>
+          </header>
+
+          <form className="account-card" onSubmit={onCreateTeacher}>
+            <div className="account-card-head">
+              <h3>선생님 추가</h3>
+              <span className="muted small">같은 조직에 새 선생님 계정을 발급합니다.</span>
+            </div>
+            <div className="grid-2">
+              <label>
+                <span>이름</span>
+                <input
+                  value={teacherCreateDraft.display_name}
+                  onChange={(e) =>
+                    setTeacherCreateDraft((current) => ({ ...current, display_name: e.target.value }))
+                  }
+                  placeholder="예: 김선생"
+                />
+              </label>
+              <label>
+                <span>아이디</span>
+                <input
+                  value={teacherCreateDraft.username}
+                  onChange={(e) =>
+                    setTeacherCreateDraft((current) => ({ ...current, username: e.target.value }))
+                  }
+                  placeholder="teacher_kim"
+                />
+              </label>
+            </div>
+            <label>
+              <span>비밀번호</span>
+              <input
+                type="password"
+                value={teacherCreateDraft.password}
+                onChange={(e) =>
+                  setTeacherCreateDraft((current) => ({ ...current, password: e.target.value }))
+                }
+                placeholder="초기 비밀번호"
+              />
+            </label>
+            <div className="form-actions">
+              <button className="btn btn-secondary" type="submit">
+                선생님 계정 생성
+              </button>
+            </div>
+          </form>
+
+          <div className="account-list-card">
+            <div className="account-card-head">
+              <h3>선생님 목록</h3>
+              <span className="muted small">메인 선생님과 추가 선생님을 함께 표시합니다.</span>
+            </div>
+            {teachers.length === 0 ? (
+              <p className="empty-inline">등록된 선생님이 없습니다.</p>
+            ) : (
+              <ul className="account-list">
+                {teachers.map((teacher) => (
+                  <li key={teacher.id} className="account-list-item">
+                    <div className="account-list-main">
+                      <strong>{teacher.display_name}</strong>
+                      <span className="muted small">@{teacher.username}</span>
+                    </div>
+                    <span
+                      className={teacher.is_primary_teacher ? "verdict verdict-ok" : "verdict verdict-neutral"}
+                    >
+                      {teacher.is_primary_teacher ? "메인 선생님" : "추가 선생님"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
+      )}
+
+      {activeTab === "student" && (
+        <section className="card account-admin">
+          <header className="card-head">
+            <div>
+              <h2>학생 계정</h2>
+              <p className="muted">반 이름은 현재 로그인한 선생님이 만든 학생끼리만 같은 반으로 묶입니다.</p>
+            </div>
+          </header>
+
+          <form className="account-card" onSubmit={onCreateStudent}>
+            <div className="account-card-head">
+              <h3>학생 추가</h3>
+              <span className="muted small">같은 반 이름을 입력하면 동일 수강반으로 묶입니다.</span>
+            </div>
+            <div className="grid-2">
+              <label>
+                <span>이름</span>
+                <input
+                  value={studentCreateDraft.display_name}
+                  onChange={(e) =>
+                    setStudentCreateDraft((current) => ({ ...current, display_name: e.target.value }))
+                  }
+                  placeholder="예: 홍길동"
+                />
+              </label>
+              <label>
+                <span>아이디</span>
+                <input
+                  value={studentCreateDraft.username}
+                  onChange={(e) =>
+                    setStudentCreateDraft((current) => ({ ...current, username: e.target.value }))
+                  }
+                  placeholder="student_hong"
+                />
+              </label>
+            </div>
+            <div className="grid-2">
+              <label>
+                <span>비밀번호</span>
+                <input
+                  type="password"
+                  value={studentCreateDraft.password}
+                  onChange={(e) =>
+                    setStudentCreateDraft((current) => ({ ...current, password: e.target.value }))
+                  }
+                  placeholder="초기 비밀번호"
+                />
+              </label>
+              <label>
+                <span>반 이름</span>
+                <input
+                  value={studentCreateDraft.class_name}
+                  onChange={(e) =>
+                    setStudentCreateDraft((current) => ({ ...current, class_name: e.target.value }))
+                  }
+                  placeholder="예: 토11시 / 금2시"
+                />
+              </label>
+            </div>
+            <div className="form-actions">
+              <button className="btn btn-primary" type="submit">
+                학생 계정 생성
+              </button>
+            </div>
+          </form>
+
+          <div className="account-list-card">
+            <div className="account-card-head">
+              <h3>반별 학생 목록</h3>
+              <span className="muted small">내가 만든 학생만 보입니다.</span>
+            </div>
+            {students.length === 0 ? (
+              <p className="empty-inline">아직 만든 학생이 없습니다.</p>
+            ) : (
+              <div className="account-class-stack">
+                {studentsByClass.map(([className, list]) => (
+                  <div key={className} className="account-class-group">
+                    <div className="account-class-header">
+                      <span className="class-chip">{className}</span>
+                      <span className="muted small">{list.length}명</span>
+                    </div>
+                    <ul className="account-list">
+                      {list.map((student) => (
+                        <li key={student.id} className="account-list-item">
+                          <div className="account-list-main">
+                            <strong>{student.display_name}</strong>
+                            <span className="muted small">@{student.username}</span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function AssignmentsView(props: {
   user: UserProfile;
   assignments: Assignment[];
-  teachers: UserProfile[];
   students: UserProfile[];
   problems: ProblemCard[];
   groups: AssignmentGroup[];
@@ -3274,12 +3536,6 @@ function AssignmentsView(props: {
   groupDetailLoading: boolean;
   onOpenGroup: (key: string) => void;
   onCloseGroup: () => void;
-  teacherCreateDraft: TeacherAccountDraft;
-  setTeacherCreateDraft: React.Dispatch<React.SetStateAction<TeacherAccountDraft>>;
-  studentCreateDraft: StudentAccountDraft;
-  setStudentCreateDraft: React.Dispatch<React.SetStateAction<StudentAccountDraft>>;
-  onCreateTeacher: (e: FormEvent) => void;
-  onCreateStudent: (e: FormEvent) => void;
   assignmentDraft: AssignmentDraft;
   setAssignmentDraft: React.Dispatch<React.SetStateAction<AssignmentDraft>>;
   onCreate: (e: FormEvent) => void;
@@ -3288,7 +3544,6 @@ function AssignmentsView(props: {
   const {
     user,
     assignments,
-    teachers,
     students,
     problems,
     groups,
@@ -3297,12 +3552,6 @@ function AssignmentsView(props: {
     groupDetailLoading,
     onOpenGroup,
     onCloseGroup,
-    teacherCreateDraft,
-    setTeacherCreateDraft,
-    studentCreateDraft,
-    setStudentCreateDraft,
-    onCreateTeacher,
-    onCreateStudent,
     assignmentDraft,
     setAssignmentDraft,
     onCreate,
@@ -3402,159 +3651,6 @@ function AssignmentsView(props: {
           </span>
         </div>
       </header>
-
-      <section className="card account-admin">
-        <header className="card-head">
-          <div>
-            <h2>계정 관리</h2>
-            <p className="muted">선생님 계정과 학생 계정은 로그인 후 여기서 직접 생성합니다.</p>
-          </div>
-          <div className="account-admin-summary">
-            <span className="summary-pill">
-              <span className="muted small">선생님</span>
-              <strong>{teachers.length}</strong>
-            </span>
-            <span className="summary-pill">
-              <span className="muted small">내 학생</span>
-              <strong>{students.length}</strong>
-            </span>
-          </div>
-        </header>
-
-        <div className="account-admin-grid">
-          <form className="account-card" onSubmit={onCreateTeacher}>
-            <div className="account-card-head">
-              <h3>선생님 추가</h3>
-              <span className="muted small">같은 메인 선생님 조직으로 묶입니다.</span>
-            </div>
-            <div className="grid-2">
-              <label>
-                <span>이름</span>
-                <input
-                  value={teacherCreateDraft.display_name}
-                  onChange={(e) => setTeacherCreateDraft((current) => ({ ...current, display_name: e.target.value }))}
-                  placeholder="예: 김선생"
-                />
-              </label>
-              <label>
-                <span>아이디</span>
-                <input
-                  value={teacherCreateDraft.username}
-                  onChange={(e) => setTeacherCreateDraft((current) => ({ ...current, username: e.target.value }))}
-                  placeholder="teacher_kim"
-                />
-              </label>
-            </div>
-            <label>
-              <span>비밀번호</span>
-              <input
-                type="password"
-                value={teacherCreateDraft.password}
-                onChange={(e) => setTeacherCreateDraft((current) => ({ ...current, password: e.target.value }))}
-                placeholder="초기 비밀번호"
-              />
-            </label>
-            <button className="btn btn-secondary" type="submit">
-              선생님 계정 생성
-            </button>
-          </form>
-
-          <form className="account-card" onSubmit={onCreateStudent}>
-            <div className="account-card-head">
-              <h3>학생 추가</h3>
-              <span className="muted small">반 이름은 현재 로그인한 선생님이 만든 학생끼리만 같은 반으로 묶입니다.</span>
-            </div>
-            <div className="grid-2">
-              <label>
-                <span>이름</span>
-                <input
-                  value={studentCreateDraft.display_name}
-                  onChange={(e) => setStudentCreateDraft((current) => ({ ...current, display_name: e.target.value }))}
-                  placeholder="예: 홍길동"
-                />
-              </label>
-              <label>
-                <span>아이디</span>
-                <input
-                  value={studentCreateDraft.username}
-                  onChange={(e) => setStudentCreateDraft((current) => ({ ...current, username: e.target.value }))}
-                  placeholder="student_hong"
-                />
-              </label>
-            </div>
-            <div className="grid-2">
-              <label>
-                <span>비밀번호</span>
-                <input
-                  type="password"
-                  value={studentCreateDraft.password}
-                  onChange={(e) => setStudentCreateDraft((current) => ({ ...current, password: e.target.value }))}
-                  placeholder="초기 비밀번호"
-                />
-              </label>
-              <label>
-                <span>반 이름</span>
-                <input
-                  value={studentCreateDraft.class_name}
-                  onChange={(e) => setStudentCreateDraft((current) => ({ ...current, class_name: e.target.value }))}
-                  placeholder="예: 토11시 / 금2시"
-                />
-              </label>
-            </div>
-            <button className="btn btn-primary" type="submit">
-              학생 계정 생성
-            </button>
-          </form>
-        </div>
-
-        <div className="account-admin-grid">
-          <div className="account-list-card">
-            <div className="account-card-head">
-              <h3>선생님 목록</h3>
-              <span className="muted small">메인 선생님과 추가 선생님을 함께 표시합니다.</span>
-            </div>
-            {teachers.length === 0 ? (
-              <p className="empty-inline">등록된 선생님이 없습니다.</p>
-            ) : (
-              <ul className="account-list">
-                {teachers.map((teacher) => (
-                  <li key={teacher.id} className="account-list-item">
-                    <div className="account-list-main">
-                      <strong>{teacher.display_name}</strong>
-                      <span className="muted small">@{teacher.username}</span>
-                    </div>
-                    <span className={teacher.is_primary_teacher ? "verdict verdict-ok" : "verdict verdict-neutral"}>
-                      {teacher.is_primary_teacher ? "메인 선생님" : "추가 선생님"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="account-list-card">
-            <div className="account-card-head">
-              <h3>내가 만든 학생</h3>
-              <span className="muted small">같은 반 이름도 현재 선생님 기준으로만 묶입니다.</span>
-            </div>
-            {students.length === 0 ? (
-              <p className="empty-inline">아직 만든 학생이 없습니다.</p>
-            ) : (
-              <ul className="account-list">
-                {students.slice(0, 8).map((student) => (
-                  <li key={student.id} className="account-list-item">
-                    <div className="account-list-main">
-                      <strong>{student.display_name}</strong>
-                      <span className="muted small">@{student.username}</span>
-                    </div>
-                    <span className="class-chip">{student.class_name ?? "반 미지정"}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-      </section>
 
       <form className="card assign-form" onSubmit={onCreate}>
         <header className="card-head">
