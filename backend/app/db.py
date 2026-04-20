@@ -53,7 +53,7 @@ def _run_schema_migrations() -> None:
         if "created_by_teacher_id" not in existing_columns:
             conn.execute(text('ALTER TABLE "user" ADD COLUMN created_by_teacher_id INTEGER'))
         if "is_primary_teacher" not in existing_columns:
-            conn.execute(text('ALTER TABLE "user" ADD COLUMN is_primary_teacher BOOLEAN NOT NULL DEFAULT 0'))
+            conn.execute(text('ALTER TABLE "user" ADD COLUMN is_primary_teacher BOOLEAN NOT NULL DEFAULT FALSE'))
 
         conn.execute(text('CREATE INDEX IF NOT EXISTS ix_user_primary_teacher_id ON "user" (primary_teacher_id)'))
         conn.execute(text('CREATE INDEX IF NOT EXISTS ix_user_created_by_teacher_id ON "user" (created_by_teacher_id)'))
