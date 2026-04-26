@@ -23,7 +23,7 @@
 backend/
 ├── requirements.txt
 └── app/
-    ├── main.py       # FastAPI 엔트리, 모든 HTTP 라우트 (~25개), CORS 설정
+    ├── main.py       # FastAPI 엔트리, 모든 HTTP 라우트 (26개), CORS 설정
     ├── models.py     # SQLModel 테이블 + 요청·응답 스키마
     ├── config.py     # STARLAB_* 환경변수 해석, Settings 데이터클래스
     ├── db.py         # 엔진·세션 팩토리, SQLite PRAGMA, 스키마 자동 마이그레이션
@@ -36,12 +36,12 @@ backend/
 
 | 기능 | 설명 |
 |---|---|
-| 역할 기반 인증 | `student` / `teacher` / `primary_teacher` 3단계, JWT HS256 |
+| 역할 기반 인증 | `student` / `teacher` 2개 role, 메인 선생님은 `is_primary_teacher` 플래그로 구분, JWT HS256 |
 | 문제은행 | 10개 알고리즘 분류, 3단계 난이도, 100문제 × 테스트케이스 50개 시드 |
 | NDJSON 스트리밍 채점 | `run_code_iter()` 제너레이터 → `stream_execution()` → 프론트 실시간 전달 |
-| 동시 채점 제어 | `asyncio.Semaphore(JUDGE_CONCURRENCY)` + 스레드풀로 이벤트 루프 블로킹 방지 |
+| 동시 채점 제어 | `threading.BoundedSemaphore(settings.judge_concurrency)`로 테스트케이스 실행 동시성 제한 |
 | 리소스 가드 | POSIX: `resource.setrlimit` (CPU·메모리), Windows: `subprocess timeout` |
-| 반 단위 과제 배정 | `class_name` 전달 시 반 학생 전원에게 `Assignment` 행 일괄 생성 |
+| 과제 배정 | `class_name` 또는 `student_ids` 전달 시 대상 학생별 `Assignment` 행 생성 |
 | 스키마 자동 마이그레이션 | 기동 시 누락 컬럼을 `ALTER TABLE` 로 자동 추가 |
 
 ### 기술 선택 이유
@@ -53,7 +53,7 @@ Pydantic 기반으로 요청·응답 스키마와 DB 모델을 한 곳에서 정
 `DATABASE_URL` 하나로 두 DB를 전환할 수 있어 로컬에서 별도 설치 없이 바로 실행됩니다. SQLite WAL 모드(`synchronous=NORMAL`, `busy_timeout=5000ms`)로 단일 프로세스 다중 연결의 쓰기 락을 최소화했습니다.
 
 **subprocess 채점기**  
-채점 요청마다 별도 Python 프로세스를 격리 실행합니다. POSIX에서 `rlimit`으로 CPU·메모리를 강제하여 무한 루프·메모리 폭발을 방지합니다. 현 단계는 신뢰된 환경 전용이며, 공개 운영 시 Docker / gVisor 래퍼로 교체가 필요합니다.
+제출 코드를 임시 디렉터리에 저장한 뒤 테스트케이스마다 별도 Python 프로세스를 실행합니다. POSIX에서 `rlimit`으로 CPU·메모리를 제한하고, Windows에서는 subprocess timeout 중심으로 제한합니다. 현 단계는 신뢰된 환경 전용이며, 공개 운영 시 Docker / gVisor 같은 별도 샌드박스가 필요합니다.
 
 **incremental 시딩**  
 문제 제목 기준으로 중복을 건너뛰기 때문에 기존 운영 DB에 서버를 재기동해도 새 문제만 추가되고 기존 데이터는 유지됩니다.
@@ -63,14 +63,27 @@ Pydantic 기반으로 요청·응답 스키마와 DB 모델을 한 곳에서 정
 | 메서드 | 경로 | 권한 | 설명 |
 |---|---|---|---|
 | `POST` | `/auth/token` | 공개 | 로그인, JWT 발급 |
+| `GET`  | `/auth/me` | 로그인 | 현재 사용자 조회 |
 | `GET`  | `/dashboard` | 로그인 | 역할별 요약 지표 |
+| `GET`  | `/categories` | 공개 | 문제 분류 목록 |
+| `GET`  | `/classrooms` | 선생님 | 현재 교사가 생성한 학생의 반 목록 |
+| `GET`  | `/students` | 선생님 | 현재 교사가 생성한 학생 목록 |
+| `GET`  | `/teachers` | 선생님 | 같은 primary teacher 조직의 선생님 목록 |
 | `GET`  | `/problems` | 공개 | 문제 목록 (분류·검색 필터) |
+| `GET`  | `/problems/{id}` | 로그인 | 문제 상세. 선생님은 전체 테스트케이스 조회 가능 |
 | `POST` | `/problems` | 선생님 | 문제 생성 |
+| `PUT`  | `/problems/{id}` | 선생님 | 문제 수정. 현재 소유자/조직 검사는 없음 |
+| `POST` | `/problems/{id}/run` | 로그인 | 공개 테스트케이스 실행, 제출 저장 없음 |
+| `POST` | `/problems/{id}/submit` | 로그인 | 전체 테스트케이스 실행 후 제출 저장 |
+| `POST` | `/problems/{id}/run/stream` | 로그인 | 공개 테스트 실행 — NDJSON 스트리밍 |
 | `POST` | `/problems/{id}/submit/stream` | 로그인 | 전체 제출 — NDJSON 스트리밍 |
-| `POST` | `/assignments` | 선생님 | 반 단위 과제 일괄 배정 |
+| `POST` | `/assignments` | 선생님 | `class_name` 또는 `student_ids` 기반 과제 생성 |
+| `GET`  | `/assignments` | 로그인 | 학생은 본인 과제, 선생님은 본인이 생성한 과제 조회 |
 | `GET`  | `/assignments/groups` | 선생님 | 반+문제 단위 완료율 집계 |
+| `GET`  | `/assignments/groups/detail` | 선생님 | 과제 그룹별 학생 상세 현황 |
+| `GET`  | `/submissions` | 로그인 | 학생은 본인 제출, 선생님은 관리 학생 제출 조회 |
 | `GET`  | `/submissions/feed` | 선생님 | 실시간 제출 피드 (`since_id` 지원) |
-| `POST` | `/users/teachers` | 메인 선생님 | 선생님 계정 생성 |
+| `POST` | `/users/teachers` | 선생님 | 선생님 계정 생성. 현재 모든 teacher가 가능 |
 | `POST` | `/users/students` | 선생님 | 학생 계정 생성 (반 지정) |
 
 전체 라우트는 기동 후 `http://127.0.0.1:8000/docs` 에서 확인하세요.
@@ -224,7 +237,7 @@ npm run preview     # 빌드 결과 로컬 미리보기
 | `STARLAB_SECRET_KEY` | 개발용 하드코딩값 | JWT 서명 키, **운영 시 반드시 교체** |
 | `STARLAB_DATABASE_URL` | 로컬 SQLite | `postgres://` 입력 시 자동 정규화 |
 | `STARLAB_ALLOW_ORIGINS` | localhost:5173/4173 | CORS 화이트리스트 |
-| `STARLAB_JUDGE_CONCURRENCY` | `4` | 동시 채점 프로세스 수 |
+| `STARLAB_JUDGE_CONCURRENCY` | `4` | 테스트케이스별 subprocess 실행 동시성 제한 |
 | `STARLAB_PRIMARY_TEACHER_PASSWORD` | `ChangeMe1234!` | **운영 전 반드시 변경** |
 
 무료 배포(Render + Supabase + Cloudflare Pages) 상세 가이드는 [DEPLOY_FREE.md](DEPLOY_FREE.md)를 참고하세요.
