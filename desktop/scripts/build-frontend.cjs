@@ -69,6 +69,10 @@ if (build.status !== 0) {
 
 fs.rmSync(desktopAppDir, { recursive: true, force: true });
 fs.cpSync(frontendDistDir, desktopAppDir, { recursive: true });
+fs.writeFileSync(
+  path.join(desktopDir, "update-config.json"),
+  `${JSON.stringify({ apiBaseUrl }, null, 2)}\n`,
+);
 
 console.log(`Packaged frontend copied to ${desktopAppDir}`);
 console.log(`API base URL: ${apiBaseUrl}`);

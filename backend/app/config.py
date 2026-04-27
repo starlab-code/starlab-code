@@ -90,6 +90,18 @@ class Settings:
     allow_origins: List[str] = field(
         default_factory=lambda: _get_list("STARLAB_ALLOW_ORIGINS", _DEFAULT_ORIGINS)
     )
+    desktop_latest_version: str = field(
+        default_factory=lambda: os.environ.get("STARLAB_DESKTOP_LATEST_VERSION", "").strip()
+    )
+    desktop_download_url: str = field(
+        default_factory=lambda: os.environ.get("STARLAB_DESKTOP_DOWNLOAD_URL", "").strip()
+    )
+    desktop_release_notes: str = field(
+        default_factory=lambda: os.environ.get("STARLAB_DESKTOP_RELEASE_NOTES", "").strip()
+    )
+    desktop_force_update: bool = field(
+        default_factory=lambda: _get_bool("STARLAB_DESKTOP_FORCE_UPDATE", False)
+    )
     seed_demo_data: bool = field(
         default_factory=lambda: _get_bool("STARLAB_SEED_DEMO_DATA", True)
     )

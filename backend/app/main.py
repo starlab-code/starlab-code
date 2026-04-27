@@ -244,6 +244,36 @@ def health():
     return {"status": "ok", "database_backend": backend}
 
 
+def _parse_version(value: str) -> tuple[int, int, int]:
+    parts = []
+    for chunk in value.strip().lstrip("v").split("."):
+        try:
+            parts.append(int("".join(ch for ch in chunk if ch.isdigit()) or "0"))
+        except ValueError:
+            parts.append(0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+
+@app.get("/desktop/update")
+def desktop_update(version: str = Query(default="0.0.0"), platform: str = Query(default="win32")):
+    latest_version = settings.desktop_latest_version
+    download_url = settings.desktop_download_url
+    update_ready = bool(latest_version and download_url)
+    update_available = update_ready and _parse_version(latest_version) > _parse_version(version)
+
+    return {
+        "available": update_available,
+        "latest_version": latest_version or version,
+        "current_version": version,
+        "platform": platform,
+        "download_url": download_url if update_available else "",
+        "release_notes": settings.desktop_release_notes,
+        "force_update": settings.desktop_force_update and update_available,
+    }
+
+
 @app.post("/auth/register", response_model=UserRead)
 def register(payload: UserCreate, session: Session = Depends(get_session)):
     del payload, session

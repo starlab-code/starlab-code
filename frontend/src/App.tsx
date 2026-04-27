@@ -1337,16 +1337,31 @@ export default function App() {
 
   if (authBootstrapping) {
     return (
-      <div className="auth-page">
-        <div className="auth-card">
-          <div className="auth-brand">
-            <span className="brand-mark">SC</span>
-            <div>
-              <h1>Starlab Code</h1>
-              <p>로그인 상태를 확인하는 중입니다.</p>
-            </div>
+      <div className="auth-page auth-loading-page">
+        <div className="auth-loading-card" role="status" aria-live="polite">
+          <div className="auth-loading-orbit" aria-hidden="true">
+            <span className="auth-loading-core">SC</span>
+            <span className="auth-loading-ring auth-loading-ring-one" />
+            <span className="auth-loading-ring auth-loading-ring-two" />
           </div>
-          <div className="toast toast-info">저장된 로그인 정보를 불러오는 중입니다...</div>
+          <div className="auth-loading-copy">
+            <h1>로그인 정보를 확인하고 있습니다</h1>
+            <p>저장된 세션을 불러오고 학습 데이터를 준비하는 중입니다.</p>
+          </div>
+          <div
+            className="auth-loading-progress"
+            role="progressbar"
+            aria-label="로그인 정보 확인 진행률"
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <span />
+          </div>
+          <div className="auth-loading-steps" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
         </div>
       </div>
     );
