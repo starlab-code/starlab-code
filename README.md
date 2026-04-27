@@ -1,5 +1,370 @@
 # Starlab Code
 
+## Desktop Windows App
+
+`desktop/` is an added Electron-based Windows desktop app layer. It does not change the existing `frontend/` or `backend/` structure.
+
+### Structure
+
+```text
+desktop/
++-- package.json                 # Electron and electron-builder scripts
++-- package-lock.json
++-- README.md                    # Desktop-only guide
++-- .gitignore                   # Ignores desktop build outputs
++-- start-starlab-desktop.ps1    # Helper for local desktop development
++-- scripts/
+|   +-- build-frontend.cjs        # Reads root .env and packages frontend/dist
++-- src/
+    +-- main.cjs                  # Electron main process
+```
+
+The normal desktop installer build packages the frontend into the app:
+
+```text
+root .env
+  STARLAB_API_BASE_URL=https://deployed-backend.example.com
+
+frontend/
+  npm run build
+
+desktop/app/
+  copied frontend production build
+
+desktop/dist/
+  Starlab Code Setup 0.1.0.exe
+```
+
+The installed app runs the bundled frontend UI locally inside Electron and calls the deployed backend API directly. It is not just opening the deployed web frontend in a browser window.
+
+### Root Environment
+
+Create a root `.env` file from `.env.example`:
+
+```env
+STARLAB_API_BASE_URL=https://your-backend.example.com
+```
+
+`STARLAB_API_BASE_URL` is baked into the bundled frontend during the desktop installer build. If the backend URL changes, rebuild the installer.
+
+Optional remote-web wrapper mode:
+
+```env
+STARLAB_DESKTOP_URL=https://your-frontend.example.com
+```
+
+Use `STARLAB_DESKTOP_URL` only if you intentionally want the desktop app to open a deployed frontend URL instead of packaging the frontend into the installer.
+
+### Backend CORS
+
+For the independent desktop app, add this origin to the deployed backend CORS setting:
+
+```text
+starlab://app
+```
+
+If both the deployed web frontend and desktop app are used:
+
+```text
+https://your-frontend.example.com,starlab://app
+```
+
+On Render, set this in `STARLAB_ALLOW_ORIGINS`, then redeploy the backend.
+
+### Local Development
+
+Run the backend:
+
+```powershell
+cd backend
+python -m uvicorn app.main:app --reload
+```
+
+Run the frontend:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Run the desktop app in development mode:
+
+```powershell
+cd desktop
+npm install
+npm run dev
+```
+
+Development mode opens `http://localhost:5173`.
+
+### Build Windows Installer
+
+From the repository root, make sure `.env` contains:
+
+```env
+STARLAB_API_BASE_URL=https://your-backend.example.com
+```
+
+Then build:
+
+```powershell
+cd desktop
+npm install
+npm run dist
+```
+
+The installer is created here:
+
+```text
+desktop/dist/Starlab Code Setup 0.1.0.exe
+```
+
+### Test Checklist
+
+1. Install `desktop/dist/Starlab Code Setup 0.1.0.exe`.
+2. Launch `Starlab Code` from the Start menu or installer finish screen.
+3. Confirm the login screen opens.
+4. Log in with an account from the deployed backend database.
+5. Confirm problem/category data loads.
+6. Open a problem and run sample code.
+7. Submit code and confirm the result is saved.
+8. Open the deployed web frontend and confirm the same submission data appears there.
+
+If the app opens but data does not load, check:
+
+- Root `.env` used the correct `STARLAB_API_BASE_URL` before running `npm run dist`.
+- Render `STARLAB_ALLOW_ORIGINS` includes `starlab://app`.
+- The deployed backend `/health` endpoint returns `{"status":"ok"}`.
+
+### Desktop Update Flow
+
+The desktop app checks the backend for updates after startup:
+
+```text
+GET /desktop/update?version=<current-app-version>&platform=win32
+```
+
+Admin update flow:
+
+1. Increase `desktop/package.json` version.
+2. Build a new installer:
+
+```powershell
+cd desktop
+npm run dist
+```
+
+3. Upload the generated installer to a public download URL.
+4. Set these variables on the deployed backend and redeploy:
+
+```env
+STARLAB_DESKTOP_LATEST_VERSION=0.1.1
+STARLAB_DESKTOP_DOWNLOAD_URL=https://your-download-host.example.com/Starlab-Code-Setup-0.1.1.exe
+STARLAB_DESKTOP_RELEASE_NOTES=Update message shown to users.
+STARLAB_DESKTOP_FORCE_UPDATE=false
+```
+
+Older installed apps will show an update prompt, download the installer to the user's Downloads folder, and offer to run it.
+
+### Desktop Version Rules
+
+The desktop app version is managed in `desktop/package.json`.
+
+Use semantic versioning:
+
+```text
+patch: 0.1.0 -> 0.1.1
+Bug fixes and small UI changes.
+
+minor: 0.1.1 -> 0.2.0
+New features or new screens.
+
+major: 0.2.0 -> 1.0.0
+Large structural changes or compatibility changes.
+```
+
+Recommended commands:
+
+```powershell
+cd desktop
+npm version patch   # Small fix
+npm version minor   # Feature update
+npm version major   # Large compatibility update
+```
+
+After changing the version, build the installer:
+
+```powershell
+npm run dist
+```
+
+The generated installer version should match `desktop/package.json`.
+
+### GitHub Releases Download Management
+
+Use GitHub Releases as the public download host for desktop installers.
+
+Recommended release flow:
+
+1. Build the installer:
+
+```powershell
+cd desktop
+npm version patch
+npm run dist
+```
+
+2. Rename the installer to a URL-friendly file name:
+
+```text
+desktop/dist/Starlab Code Setup 0.1.1.exe
+```
+
+to:
+
+```text
+Starlab-Code-Setup-0.1.1.exe
+```
+
+3. Open the GitHub repository.
+4. Go to `Releases`.
+5. Click `Create a new release`.
+6. Create a tag such as:
+
+```text
+desktop-v0.1.1
+```
+
+7. Upload `Starlab-Code-Setup-0.1.1.exe` as a release asset.
+8. Publish the release.
+9. Copy the uploaded asset URL.
+
+The URL usually looks like:
+
+```text
+https://github.com/<owner>/<repo>/releases/download/desktop-v0.1.1/Starlab-Code-Setup-0.1.1.exe
+```
+
+Set the deployed backend environment variables:
+
+```env
+STARLAB_DESKTOP_LATEST_VERSION=0.1.1
+STARLAB_DESKTOP_DOWNLOAD_URL=https://github.com/<owner>/<repo>/releases/download/desktop-v0.1.1/Starlab-Code-Setup-0.1.1.exe
+STARLAB_DESKTOP_RELEASE_NOTES=Bug fixes and small UI improvements.
+STARLAB_DESKTOP_FORCE_UPDATE=false
+```
+
+Redeploy the backend after changing these values.
+
+### Full Desktop Update Test Flow
+
+Use this flow to test the update system end to end.
+
+1. Build and install the old app version.
+
+Example old version:
+
+```text
+desktop/package.json -> 0.1.0
+```
+
+Build:
+
+```powershell
+cd desktop
+npm run dist
+```
+
+Install:
+
+```text
+desktop/dist/Starlab Code Setup 0.1.0.exe
+```
+
+2. Confirm the installed app opens normally.
+
+3. Create a new version:
+
+```powershell
+cd desktop
+npm version patch
+npm run dist
+```
+
+Example new version:
+
+```text
+0.1.1
+```
+
+4. Rename the new installer:
+
+```text
+Starlab-Code-Setup-0.1.1.exe
+```
+
+5. Upload it to GitHub Releases.
+
+Recommended tag:
+
+```text
+desktop-v0.1.1
+```
+
+6. Set backend update variables:
+
+```env
+STARLAB_DESKTOP_LATEST_VERSION=0.1.1
+STARLAB_DESKTOP_DOWNLOAD_URL=https://github.com/<owner>/<repo>/releases/download/desktop-v0.1.1/Starlab-Code-Setup-0.1.1.exe
+STARLAB_DESKTOP_RELEASE_NOTES=Testing the desktop update flow.
+STARLAB_DESKTOP_FORCE_UPDATE=false
+```
+
+7. Redeploy the backend.
+
+8. Verify the backend manifest directly:
+
+```text
+https://your-backend.example.com/desktop/update?version=0.1.0&platform=win32
+```
+
+Expected response:
+
+```json
+{
+  "available": true,
+  "latest_version": "0.1.1",
+  "current_version": "0.1.0",
+  "platform": "win32",
+  "download_url": "https://github.com/<owner>/<repo>/releases/download/desktop-v0.1.1/Starlab-Code-Setup-0.1.1.exe",
+  "release_notes": "Testing the desktop update flow.",
+  "force_update": false
+}
+```
+
+9. Open the previously installed `0.1.0` desktop app.
+
+10. Confirm the update prompt appears.
+
+11. Click download.
+
+12. Confirm the installer downloads to the user's Downloads folder.
+
+13. Click `Run now` in the desktop app prompt.
+
+14. Complete the installer.
+
+15. Reopen Starlab Code and confirm the app version is updated.
+
+If no update prompt appears:
+
+- Confirm the installed app version is lower than `STARLAB_DESKTOP_LATEST_VERSION`.
+- Confirm the app was built after `.env` had the correct `STARLAB_API_BASE_URL`.
+- Confirm `/desktop/update?version=<old-version>&platform=win32` returns `"available": true`.
+- Confirm `STARLAB_DESKTOP_DOWNLOAD_URL` is publicly reachable without login.
+- Confirm the backend was redeployed after changing update environment variables.
+
 중, 고등학생 대상 알고리즘 문제 풀이 및 수업 운영 플랫폼 MVP.  
 선생님은 문제를 만들고 반 단위로 과제를 배정하며 실시간 제출을 모니터링하고,  
 학생은 테스트케이스별 채점 진행을 실시간으로 확인할 수 있습니다.
