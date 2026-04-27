@@ -1,5 +1,142 @@
 # Starlab Code
 
+## Desktop Windows App
+
+`desktop/` is an added Electron-based Windows desktop app layer. It does not change the existing `frontend/` or `backend/` structure.
+
+### Structure
+
+```text
+desktop/
++-- package.json                 # Electron and electron-builder scripts
++-- package-lock.json
++-- README.md                    # Desktop-only guide
++-- .gitignore                   # Ignores desktop build outputs
++-- start-starlab-desktop.ps1    # Helper for local desktop development
++-- scripts/
+|   +-- build-frontend.cjs        # Reads root .env and packages frontend/dist
++-- src/
+    +-- main.cjs                  # Electron main process
+```
+
+The normal desktop installer build packages the frontend into the app:
+
+```text
+root .env
+  STARLAB_API_BASE_URL=https://deployed-backend.example.com
+
+frontend/
+  npm run build
+
+desktop/app/
+  copied frontend production build
+
+desktop/dist/
+  Starlab Code Setup 0.1.0.exe
+```
+
+The installed app runs the bundled frontend UI locally inside Electron and calls the deployed backend API directly. It is not just opening the deployed web frontend in a browser window.
+
+### Root Environment
+
+Create a root `.env` file from `.env.example`:
+
+```env
+STARLAB_API_BASE_URL=https://your-backend.example.com
+```
+
+`STARLAB_API_BASE_URL` is baked into the bundled frontend during the desktop installer build. If the backend URL changes, rebuild the installer.
+
+Optional remote-web wrapper mode:
+
+```env
+STARLAB_DESKTOP_URL=https://your-frontend.example.com
+```
+
+Use `STARLAB_DESKTOP_URL` only if you intentionally want the desktop app to open a deployed frontend URL instead of packaging the frontend into the installer.
+
+### Backend CORS
+
+For the independent desktop app, add this origin to the deployed backend CORS setting:
+
+```text
+starlab://app
+```
+
+If both the deployed web frontend and desktop app are used:
+
+```text
+https://your-frontend.example.com,starlab://app
+```
+
+On Render, set this in `STARLAB_ALLOW_ORIGINS`, then redeploy the backend.
+
+### Local Development
+
+Run the backend:
+
+```powershell
+cd backend
+python -m uvicorn app.main:app --reload
+```
+
+Run the frontend:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Run the desktop app in development mode:
+
+```powershell
+cd desktop
+npm install
+npm run dev
+```
+
+Development mode opens `http://localhost:5173`.
+
+### Build Windows Installer
+
+From the repository root, make sure `.env` contains:
+
+```env
+STARLAB_API_BASE_URL=https://your-backend.example.com
+```
+
+Then build:
+
+```powershell
+cd desktop
+npm install
+npm run dist
+```
+
+The installer is created here:
+
+```text
+desktop/dist/Starlab Code Setup 0.1.0.exe
+```
+
+### Test Checklist
+
+1. Install `desktop/dist/Starlab Code Setup 0.1.0.exe`.
+2. Launch `Starlab Code` from the Start menu or installer finish screen.
+3. Confirm the login screen opens.
+4. Log in with an account from the deployed backend database.
+5. Confirm problem/category data loads.
+6. Open a problem and run sample code.
+7. Submit code and confirm the result is saved.
+8. Open the deployed web frontend and confirm the same submission data appears there.
+
+If the app opens but data does not load, check:
+
+- Root `.env` used the correct `STARLAB_API_BASE_URL` before running `npm run dist`.
+- Render `STARLAB_ALLOW_ORIGINS` includes `starlab://app`.
+- The deployed backend `/health` endpoint returns `{"status":"ok"}`.
+
 중, 고등학생 대상 알고리즘 문제 풀이 및 수업 운영 플랫폼 MVP.  
 선생님은 문제를 만들고 반 단위로 과제를 배정하며 실시간 제출을 모니터링하고,  
 학생은 테스트케이스별 채점 진행을 실시간으로 확인할 수 있습니다.
