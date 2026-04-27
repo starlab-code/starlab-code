@@ -118,12 +118,12 @@ def list_teachers_in_org(session: Session, current_user: User) -> List[User]:
 
 
 def list_students_for_teacher(session: Session, current_user: User) -> List[User]:
-    return session.exec(
-        select(User).where(
-            User.role == UserRole.student,
-            User.created_by_teacher_id == current_user.id,
-        ).order_by(User.class_name, User.display_name)
-    ).all()
+    statement = select(User).where(User.role == UserRole.student)
+    if current_user.is_primary_teacher:
+        statement = statement.where(User.primary_teacher_id == get_primary_teacher_id(current_user))
+    else:
+        statement = statement.where(User.created_by_teacher_id == current_user.id)
+    return session.exec(statement.order_by(User.class_name, User.display_name)).all()
 
 
 def validate_account_fields(username: str, display_name: str, password: str) -> tuple[str, str]:
@@ -424,6 +424,87 @@ def create_student_account(
     session.commit()
     session.refresh(student)
     return to_user_read(student)
+
+
+def _delete_student_records(session: Session, student: User) -> None:
+    assignments = session.exec(select(Assignment).where(Assignment.student_id == student.id)).all()
+    assignment_ids = [assignment.id for assignment in assignments]
+    submissions = session.exec(select(Submission).where(Submission.user_id == student.id)).all()
+    if assignment_ids:
+        assignment_submissions = session.exec(
+            select(Submission).where(Submission.assignment_id.in_(assignment_ids))
+        ).all()
+        seen = {submission.id for submission in submissions}
+        submissions.extend([submission for submission in assignment_submissions if submission.id not in seen])
+    for submission in submissions:
+        session.delete(submission)
+    for assignment in assignments:
+        session.delete(assignment)
+    session.delete(student)
+
+
+@app.delete("/users/students/{student_id}")
+def delete_student_account(
+    student_id: int,
+    current_user: User = Depends(auth.require_teacher),
+    session: Session = Depends(get_session),
+):
+    student = session.get(User, student_id)
+    if not student or student.role != UserRole.student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    primary_teacher_id = get_primary_teacher_id(current_user)
+    if student.primary_teacher_id != primary_teacher_id:
+        raise HTTPException(status_code=403, detail="Cannot delete a student from another organization")
+    if not current_user.is_primary_teacher and student.created_by_teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the creating teacher or primary teacher can delete this student")
+
+    _delete_student_records(session, student)
+    session.commit()
+    return {"ok": True}
+
+
+@app.delete("/users/teachers/{teacher_id}")
+def delete_teacher_account(
+    teacher_id: int,
+    current_user: User = Depends(auth.require_teacher),
+    session: Session = Depends(get_session),
+):
+    if not current_user.is_primary_teacher:
+        raise HTTPException(status_code=403, detail="Only the primary teacher can delete teacher accounts")
+    if teacher_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Primary teacher account cannot delete itself")
+
+    teacher = session.get(User, teacher_id)
+    if not teacher or teacher.role != UserRole.teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+    if teacher.is_primary_teacher or get_primary_teacher_id(teacher) != current_user.id:
+        raise HTTPException(status_code=403, detail="Cannot delete this teacher")
+
+    students = session.exec(select(User).where(User.created_by_teacher_id == teacher.id)).all()
+    for student in students:
+        student.created_by_teacher_id = current_user.id
+        student.primary_teacher_id = current_user.id
+        session.add(student)
+
+    assignments = session.exec(select(Assignment).where(Assignment.teacher_id == teacher.id)).all()
+    assignment_ids = [assignment.id for assignment in assignments]
+    if assignment_ids:
+        submissions = session.exec(select(Submission).where(Submission.assignment_id.in_(assignment_ids))).all()
+        for submission in submissions:
+            submission.assignment_id = None
+            session.add(submission)
+    for assignment in assignments:
+        session.delete(assignment)
+
+    problems = session.exec(select(Problem).where(Problem.created_by == teacher.id)).all()
+    for problem in problems:
+        problem.created_by = current_user.id
+        session.add(problem)
+
+    session.delete(teacher)
+    session.commit()
+    return {"ok": True}
 
 
 @app.get("/problems", response_model=List[ProblemCard])

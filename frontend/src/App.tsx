@@ -1041,7 +1041,6 @@ export default function App() {
       const body = new URLSearchParams();
       body.set("username", loginDraft.username);
       body.set("password", loginDraft.password);
-      body.set("role", loginRole);
       const auth = await request<AuthResponse>("/auth/token", {
         method: "POST",
         body,
@@ -1096,6 +1095,42 @@ export default function App() {
       await loadAppData(token, user);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "학생 계정 생성에 실패했습니다.");
+    }
+  }
+
+  async function handleDeleteTeacher(teacherId: number) {
+    if (!token || !user || user.role !== "teacher") return;
+    const teacher = teachers.find((item) => item.id === teacherId);
+    if (!teacher || teacher.is_primary_teacher) return;
+    if (!window.confirm(`${teacher.display_name} 선생님 계정을 삭제할까요? 담당 학생은 마스터 선생님에게 이관됩니다.`)) {
+      return;
+    }
+    setError(null);
+    setMessage(null);
+    try {
+      await request<{ ok: boolean }>(`/users/teachers/${teacherId}`, { method: "DELETE" }, token);
+      setMessage(`${teacher.display_name} 선생님 계정을 삭제했습니다.`);
+      await loadAppData(token, user);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "선생님 계정 삭제에 실패했습니다.");
+    }
+  }
+
+  async function handleDeleteStudent(studentId: number) {
+    if (!token || !user || user.role !== "teacher") return;
+    const student = students.find((item) => item.id === studentId);
+    if (!student) return;
+    if (!window.confirm(`${student.display_name} 학생 계정과 관련 과제/제출 기록을 삭제할까요?`)) {
+      return;
+    }
+    setError(null);
+    setMessage(null);
+    try {
+      await request<{ ok: boolean }>(`/users/students/${studentId}`, { method: "DELETE" }, token);
+      setMessage(`${student.display_name} 학생 계정을 삭제했습니다.`);
+      await loadAppData(token, user);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "학생 계정 삭제에 실패했습니다.");
     }
   }
 
@@ -1337,27 +1372,21 @@ export default function App() {
 
   if (authBootstrapping) {
     return (
-      <div className="auth-page auth-loading-page">
-        <div className="auth-loading-card" role="status" aria-live="polite">
-          <div className="auth-loading-orbit" aria-hidden="true">
-            <span className="auth-loading-core">SC</span>
-            <span className="auth-loading-ring auth-loading-ring-one" />
-            <span className="auth-loading-ring auth-loading-ring-two" />
+      <div className="auth-cinematic-page auth-loading-scene">
+        <div className="auth-loader-wrap" role="status" aria-live="polite">
+          <div className="auth-loader-logo">
+            <span className="auth-loader-ring" />
+            <span className="auth-loader-inner">SC</span>
           </div>
-          <div className="auth-loading-copy">
-            <h1>로그인 정보를 확인하고 있습니다</h1>
-            <p>저장된 세션을 불러오고 학습 데이터를 준비하는 중입니다.</p>
+          <div className="auth-loader-copy">
+            <h1>로그인 데이터 불러오기</h1>
+            <p>인증 확인 중 · 학습 데이터 동기화</p>
           </div>
-          <div
-            className="auth-loading-progress"
-            role="progressbar"
-            aria-label="로그인 정보 확인 진행률"
-            aria-valuemin={0}
-            aria-valuemax={100}
-          >
+          <div className="auth-loader-track" role="progressbar" aria-label="Loading login data" aria-valuemin={0} aria-valuemax={100}>
             <span />
           </div>
-          <div className="auth-loading-steps" aria-hidden="true">
+          <div className="auth-loader-dots" aria-hidden="true">
+            <span className="on" />
             <span />
             <span />
             <span />
@@ -1369,184 +1398,84 @@ export default function App() {
 
   if (!user || !token) {
     return (
-      <div className="auth-page">
-        <div className="auth-card auth-card-wide">
-          <div className="auth-brand">
-            <span className="brand-mark">SC</span>
+      <div className="auth-cinematic-page">
+        <div className="auth-code-float auth-code-float-one">{"def solve():\n    return answer"}</div>
+        <div className="auth-code-float auth-code-float-two">{"queue = deque([start])\nwhile queue:"}</div>
+        <div className="auth-code-float auth-code-float-three">{"dp[i] = max(dp[i], dp[i-1])"}</div>
+        <section className="auth-cinematic-shell">
+          <aside className="auth-brand-panel">
             <div>
-              <h1>Starlab Code</h1>
-              <p>선생님이 계정을 생성하고, 학생은 배정된 계정으로 바로 로그인하는 구조입니다.</p>
-            </div>
-          </div>
-
-          <div className="auth-role-tabs" role="tablist" aria-label="로그인 유형">
-            <button
-              type="button"
-              className={loginRole === "teacher" ? "auth-role-tab auth-role-tab-active" : "auth-role-tab"}
-              onClick={() => setLoginRole("teacher")}
-            >
-              선생님 로그인
-            </button>
-            <button
-              type="button"
-              className={loginRole === "student" ? "auth-role-tab auth-role-tab-active" : "auth-role-tab"}
-              onClick={() => setLoginRole("student")}
-            >
-              학생 로그인
-            </button>
-          </div>
-
-          <form className="auth-form" onSubmit={handleLogin}>
-            <h2>{loginRole === "teacher" ? "선생님 계정으로 로그인" : "학생 계정으로 로그인"}</h2>
-            <label>
-              <span>아이디</span>
-              <input
-                value={loginDraft.username}
-                onChange={(e) => setLoginDraft((c) => ({ ...c, username: e.target.value }))}
-                placeholder={loginRole === "teacher" ? "선생님 아이디" : "학생 아이디"}
-              />
-            </label>
-            <label>
-              <span>비밀번호</span>
-              <input
-                type="password"
-                value={loginDraft.password}
-                onChange={(e) => setLoginDraft((c) => ({ ...c, password: e.target.value }))}
-                placeholder="비밀번호"
-              />
-            </label>
-            <button className="btn btn-primary btn-block" type="submit">
-              {loginRole === "teacher" ? "선생님 로그인" : "학생 로그인"}
-            </button>
-          </form>
-
-          <div className="auth-note">
-            <strong>{loginRole === "teacher" ? "선생님 계정 안내" : "학생 계정 안내"}</strong>
-            <p className="muted">
-              {loginRole === "teacher"
-                ? "메인 선생님 계정은 배포 시 자동 생성되고, 추가 선생님 계정과 학생 계정은 로그인 후 선생님 화면에서 만들 수 있습니다."
-                : "학생 계정은 선생님이 생성해 준 아이디와 비밀번호로만 로그인할 수 있습니다."}
-            </p>
-          </div>
-
-          {(message || error) && (
-            <div className={`toast ${error ? "toast-error" : "toast-ok"}`}>{error ?? message}</div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (!user || !token) {
-    return (
-      <div className="auth-page">
-        <div className="auth-card">
-          <div className="auth-brand">
-            <span className="brand-mark">SC</span>
-            <div>
-              <h1>Starlab Code</h1>
-              <p>중·고등학생을 위한 알고리즘 문제 풀이 플랫폼</p>
-            </div>
-          </div>
-
-          <form className="auth-form" onSubmit={handleLogin}>
-            <h2>로그인</h2>
-            <label>
-              <span>아이디</span>
-              <input
-                value={loginDraft.username}
-                onChange={(e) => setLoginDraft((c) => ({ ...c, username: e.target.value }))}
-              />
-            </label>
-            <label>
-              <span>비밀번호</span>
-              <input
-                type="password"
-                value={loginDraft.password}
-                onChange={(e) => setLoginDraft((c) => ({ ...c, password: e.target.value }))}
-              />
-            </label>
-            <button className="btn btn-primary btn-block" type="submit">
-              로그인
-            </button>
-            <div className="quick-accounts">
-              <span>체험 계정</span>
-              <button type="button" onClick={() => setLoginDraft({ username: "teacher_demo", password: "demo1234" })}>
-                강사
-              </button>
-            </div>
-          </form>
-
-          <details className="auth-register">
-            <summary>학생 계정 만들기</summary>
-            <form className="auth-form" onSubmit={handleRegister}>
-              <div className="grid-2">
-                <label>
-                  <span>이름</span>
-                  <input
-                    value={registerDraft.display_name}
-                    onChange={(e) => setRegisterDraft((c) => ({ ...c, display_name: e.target.value }))}
-                  />
-                </label>
-                <label>
-                  <span>아이디</span>
-                  <input
-                    value={registerDraft.username}
-                    onChange={(e) => setRegisterDraft((c) => ({ ...c, username: e.target.value }))}
-                  />
-                </label>
+              <div className="auth-logo-row">
+                <span className="auth-logo-mark">SC</span>
+                <strong>Starlab<span>Code</span></strong>
               </div>
-              <div className="grid-2">
-                <label>
-                  <span>비밀번호</span>
-                  <input
-                    type="password"
-                    value={registerDraft.password}
-                    onChange={(e) => setRegisterDraft((c) => ({ ...c, password: e.target.value }))}
-                  />
-                </label>
-              </div>
-              {classrooms.length > 0 && (
-                <label>
-                  <span>기존 수강반 선택</span>
-                  <select
-                    value={registerDraft.class_name}
-                    onChange={(e) => setRegisterDraft((c) => ({ ...c, class_name: e.target.value }))}
-                  >
-                    <option value="">수강반을 선택해 주세요</option>
-                    {classrooms.map((classroom) => (
-                      <option key={classroom.name} value={classroom.name}>
-                        {classroom.name} ({classroom.student_count}명)
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <label>
-                <span>{classrooms.length > 0 ? "새 반 만들기" : "첫 수강반 만들기"}</span>
-                <input
-                  placeholder="예: 중등 심화A"
-                  value={registerNewClassName}
-                  onChange={(e) => setRegisterNewClassName(e.target.value)}
-                />
-              </label>
-              <p className="muted small">
-                기존 반을 선택하거나 새 반 이름을 입력하면 바로 학생 계정을 만들 수 있어요.
+              <h1>
+                알고리즘 수업을 <span>한눈에</span>
+              </h1>
+              <p>
+                문제 풀이, 과제 배정, 실시간 채점 흐름을 하나의 학습 공간에서 관리합니다.
               </p>
-              <button className="btn btn-secondary btn-block" type="submit">
-                계정 생성
-              </button>
-            </form>
-          </details>
+            </div>
+            <div className="auth-feature-list" aria-hidden="true">
+              <div><span>01</span> 실시간 채점 진행 확인</div>
+              <div><span>02</span> 학생별 과제와 제출 기록 관리</div>
+              <div><span>03</span> 서버가 선생님/학생 계정 자동 판별</div>
+            </div>
+          </aside>
 
-          {(message || error) && (
-            <div className={`toast ${error ? "toast-error" : "toast-ok"}`}>{error ?? message}</div>
-          )}
-        </div>
+          <div className="auth-cinematic-divider" />
+
+          <main className="auth-form-panel">
+            <div className="auth-glass-card">
+              <div>
+                <h2>로그인</h2>
+                <p>계정 유형은 로그인 후 서버에서 자동으로 확인합니다.</p>
+              </div>
+
+              {(message || error) && (
+                <div className={`auth-dark-toast ${error ? "auth-dark-toast-error" : "auth-dark-toast-ok"}`}>
+                  {error ?? message}
+                </div>
+              )}
+
+              <form className="auth-dark-form" onSubmit={handleLogin}>
+                <label className="auth-dark-field">
+                  <span>아이디</span>
+                  <div>
+                    <b aria-hidden="true">@</b>
+                    <input
+                      value={loginDraft.username}
+                      onChange={(e) => setLoginDraft((c) => ({ ...c, username: e.target.value }))}
+                      placeholder="아이디를 입력하세요"
+                      autoComplete="username"
+                    />
+                  </div>
+                </label>
+
+                <label className="auth-dark-field">
+                  <span>비밀번호</span>
+                  <div>
+                    <b aria-hidden="true">*</b>
+                    <input
+                      type="password"
+                      value={loginDraft.password}
+                      onChange={(e) => setLoginDraft((c) => ({ ...c, password: e.target.value }))}
+                      placeholder="비밀번호를 입력하세요"
+                      autoComplete="current-password"
+                    />
+                  </div>
+                </label>
+
+                <button className="auth-dark-submit" type="submit">
+                  로그인
+                </button>
+              </form>
+            </div>
+          </main>
+        </section>
       </div>
     );
   }
-
   const navItems: { key: View; label: string; show: boolean }[] = [
     { key: "home", label: user.role === "teacher" ? "대시보드" : "홈", show: true },
     { key: "problems", label: "문제", show: true },
@@ -1708,6 +1637,7 @@ export default function App() {
 
         {view === "accounts" && user.role === "teacher" && (
           <AccountsView
+            user={user}
             teachers={teachers}
             students={students}
             teacherCreateDraft={teacherCreateDraft}
@@ -1716,6 +1646,8 @@ export default function App() {
             setStudentCreateDraft={setStudentCreateDraft}
             onCreateTeacher={handleCreateTeacher}
             onCreateStudent={handleCreateStudent}
+            onDeleteTeacher={handleDeleteTeacher}
+            onDeleteStudent={handleDeleteStudent}
           />
         )}
 
@@ -3285,6 +3217,7 @@ function SolveView(props: {
 }
 
 function AccountsView(props: {
+  user: UserProfile;
   teachers: UserProfile[];
   students: UserProfile[];
   teacherCreateDraft: TeacherAccountDraft;
@@ -3293,9 +3226,12 @@ function AccountsView(props: {
   setStudentCreateDraft: React.Dispatch<React.SetStateAction<StudentAccountDraft>>;
   onCreateTeacher: (e: FormEvent) => void;
   onCreateStudent: (e: FormEvent) => void;
+  onDeleteTeacher: (teacherId: number) => void;
+  onDeleteStudent: (studentId: number) => void;
 }) {
   const {
     teachers,
+    user,
     students,
     teacherCreateDraft,
     setTeacherCreateDraft,
@@ -3303,6 +3239,8 @@ function AccountsView(props: {
     setStudentCreateDraft,
     onCreateTeacher,
     onCreateStudent,
+    onDeleteTeacher,
+    onDeleteStudent,
   } = props;
 
   const [activeTab, setActiveTab] = useState<"teacher" | "student">("teacher");
@@ -3425,11 +3363,22 @@ function AccountsView(props: {
                       <strong>{teacher.display_name}</strong>
                       <span className="muted small">@{teacher.username}</span>
                     </div>
-                    <span
-                      className={teacher.is_primary_teacher ? "verdict verdict-ok" : "verdict verdict-neutral"}
-                    >
-                      {teacher.is_primary_teacher ? "메인 선생님" : "추가 선생님"}
-                    </span>
+                    <div className="account-list-actions">
+                      <span
+                        className={teacher.is_primary_teacher ? "verdict verdict-ok" : "verdict verdict-neutral"}
+                      >
+                        {teacher.is_primary_teacher ? "메인 선생님" : "추가 선생님"}
+                      </span>
+                      {user.is_primary_teacher && !teacher.is_primary_teacher && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm btn-danger"
+                          onClick={() => onDeleteTeacher(teacher.id)}
+                        >
+                          삭제
+                        </button>
+                      )}
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -3526,6 +3475,13 @@ function AccountsView(props: {
                             <strong>{student.display_name}</strong>
                             <span className="muted small">@{student.username}</span>
                           </div>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm btn-danger"
+                            onClick={() => onDeleteStudent(student.id)}
+                          >
+                            삭제
+                          </button>
                         </li>
                       ))}
                     </ul>
