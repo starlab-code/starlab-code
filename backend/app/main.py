@@ -1014,6 +1014,35 @@ def update_assignment(
     return build_assignment_reads(session, [assignment])[0]
 
 
+@app.delete("/assignments/{assignment_id}")
+def delete_assignment(
+    assignment_id: int,
+    current_user: User = Depends(auth.require_teacher),
+    session: Session = Depends(get_session),
+):
+    """단일 과제 삭제"""
+    assignment = session.get(Assignment, assignment_id)
+    if not assignment:
+        raise HTTPException(status_code=404, detail="과제를 찾을 수 없습니다.")
+
+    # 현재 teacher가 생성한 과제인지 확인
+    if assignment.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="이 과제를 삭제할 권한이 없습니다.")
+
+    # 제출 기록의 assignment_id를 null 처리
+    submissions = session.exec(
+        select(Submission).where(Submission.assignment_id == assignment_id)
+    ).all()
+    for submission in submissions:
+        submission.assignment_id = None
+        session.add(submission)
+
+    session.delete(assignment)
+    session.commit()
+
+    return {"ok": True}
+
+
 @app.get("/submissions")
 def list_submissions(
     problem_id: Optional[int] = Query(default=None),
