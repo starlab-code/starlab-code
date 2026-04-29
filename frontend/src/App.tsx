@@ -1463,7 +1463,7 @@ export default function App() {
         if (kind === "submit") {
           await loadAppData(token, user ?? undefined);
           setMessage(
-            `제출 결과: ${statusLabel(finalSummary.status)} (${finalSummary.passed_tests}/${finalSummary.total_tests})`,
+            `제출 결과: ${statusLabel(finalSummary.status)}`,
           );
         } else {
           setMessage("예제 테스트 실행 완료");
@@ -4599,8 +4599,8 @@ function GradingPanel({ stream, isRunning }: { stream: StreamState; isRunning: b
                     <strong>테스트 {r.index + 1} 상세</strong>
                   </div>
                   <div className="result-meta mono">
-                    {r.expected && <span>예상 출력값<br />{r.expected}</span>}
                     {r.actual && <span>출력<br />{r.actual}</span>}
+                    {r.expected && <span>예상 출력값<br />{r.expected}</span>}
                     {r.stderr && <span className="bad">에러: {r.stderr}</span>}
                   </div>
                 </li>
