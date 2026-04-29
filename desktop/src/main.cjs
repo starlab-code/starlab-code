@@ -1,11 +1,13 @@
 const fs = require("fs");
 const path = require("path");
+const { spawn } = require("child_process");
 const { pathToFileURL } = require("url");
-const { app, BrowserWindow, Menu, dialog, net, protocol, shell } = require("electron");
+const { app, BrowserWindow, Menu, dialog, net, protocol, shell, ipcMain } = require("electron");
 
 const DEFAULT_APP_URL = "http://localhost:5173";
 const LOCAL_APP_DIR = path.join(__dirname, "..", "app");
 const UPDATE_CONFIG_PATH = path.join(__dirname, "..", "update-config.json");
+const OVERLAY_SCRIPT_PATH = path.join(__dirname, "update-overlay.js");
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -18,6 +20,17 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ]);
+
+const updateState = {
+  status: "idle",
+  manifest: null,
+  progress: { downloaded: 0, total: 0 },
+  error: null,
+  installerPath: null,
+};
+
+let overlayScriptCache = null;
+let installLaunched = false;
 
 function hasBundledApp() {
   return fs.existsSync(path.join(LOCAL_APP_DIR, "index.html"));
@@ -68,6 +81,45 @@ function safeFileName(value) {
   return String(value || "Starlab-Code-Setup.exe").replace(/[<>:"/\\|?*\x00-\x1F]/g, "-");
 }
 
+function loadOverlayScript() {
+  if (overlayScriptCache) return overlayScriptCache;
+  overlayScriptCache = fs.readFileSync(OVERLAY_SCRIPT_PATH, "utf8");
+  return overlayScriptCache;
+}
+
+function getMainWindow() {
+  const windows = BrowserWindow.getAllWindows();
+  return windows.find((w) => !w.isDestroyed()) || null;
+}
+
+function snapshotState() {
+  return {
+    status: updateState.status,
+    manifest: updateState.manifest,
+    progress: { ...updateState.progress },
+    error: updateState.error,
+  };
+}
+
+function broadcastState() {
+  const window = getMainWindow();
+  if (!window || window.isDestroyed()) return;
+  if (window.webContents.isLoading()) return;
+  window.webContents.send("starlab-update:state", snapshotState());
+}
+
+async function injectOverlay(window) {
+  if (!window || window.isDestroyed()) return;
+  try {
+    await window.webContents.executeJavaScript(loadOverlayScript(), true);
+    broadcastState();
+  } catch (error) {
+    if (process.env.STARLAB_SHOW_UPDATE_ERRORS) {
+      console.error("[starlab-update] overlay injection failed", error);
+    }
+  }
+}
+
 async function fetchUpdateManifest(apiBaseUrl) {
   if (!apiBaseUrl) return null;
 
@@ -84,7 +136,7 @@ async function fetchUpdateManifest(apiBaseUrl) {
   return response.json();
 }
 
-async function downloadUpdate(mainWindow, manifest) {
+async function downloadInstaller(window, manifest) {
   const downloadUrl = manifest.download_url;
   const response = await net.fetch(downloadUrl);
   if (!response.ok || !response.body) {
@@ -92,11 +144,17 @@ async function downloadUpdate(mainWindow, manifest) {
   }
 
   const contentLength = Number(response.headers.get("content-length") || "0");
-  const fileName = safeFileName(path.basename(new URL(downloadUrl).pathname) || `Starlab Code Setup ${manifest.latest_version}.exe`);
+  const fileName = safeFileName(
+    path.basename(new URL(downloadUrl).pathname) || `Starlab Code Setup ${manifest.latest_version}.exe`,
+  );
   const filePath = path.join(app.getPath("downloads"), fileName);
   const reader = response.body.getReader();
   const writer = fs.createWriteStream(filePath);
   let downloaded = 0;
+  let lastBroadcast = 0;
+
+  updateState.progress = { downloaded: 0, total: contentLength };
+  broadcastState();
 
   try {
     while (true) {
@@ -104,19 +162,126 @@ async function downloadUpdate(mainWindow, manifest) {
       if (done) break;
       downloaded += value.byteLength;
       writer.write(Buffer.from(value));
-      if (contentLength > 0 && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.setProgressBar(Math.min(downloaded / contentLength, 1));
+
+      if (window && !window.isDestroyed()) {
+        const fraction = contentLength > 0 ? Math.min(downloaded / contentLength, 1) : -1;
+        window.setProgressBar(fraction);
+      }
+
+      const now = Date.now();
+      if (now - lastBroadcast > 120 || downloaded === contentLength) {
+        updateState.progress = { downloaded, total: contentLength };
+        broadcastState();
+        lastBroadcast = now;
       }
     }
   } finally {
     await new Promise((resolve) => writer.end(resolve));
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setProgressBar(-1);
+    if (window && !window.isDestroyed()) {
+      window.setProgressBar(-1);
     }
   }
 
+  updateState.progress = { downloaded, total: contentLength || downloaded };
+  broadcastState();
   return filePath;
 }
+
+function launchSilentInstaller(filePath) {
+  if (installLaunched) return;
+  installLaunched = true;
+
+  const exePath = process.execPath;
+  // Run installer silently, wait for it to finish replacing files, then re-launch the app.
+  // `&` chains regardless of exit code so we still relaunch on a benign installer warning.
+  // `shell: true` routes through `cmd.exe /d /s /c` which handles the nested quotes correctly.
+  const cmdLine = `start "" /wait "${filePath}" /S & start "" "${exePath}"`;
+
+  const child = spawn(cmdLine, [], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+    shell: true,
+  });
+  child.unref();
+}
+
+async function startUpdateFlow() {
+  if (updateState.status === "downloading" || updateState.status === "installing") return;
+  if (!updateState.manifest) return;
+
+  const window = getMainWindow();
+  updateState.status = "downloading";
+  updateState.error = null;
+  updateState.progress = { downloaded: 0, total: 0 };
+  broadcastState();
+
+  try {
+    const filePath = await downloadInstaller(window, updateState.manifest);
+    updateState.installerPath = filePath;
+    updateState.status = "installing";
+    updateState.error = null;
+    broadcastState();
+
+    // Give the renderer a beat to paint the "installing" state before we tear the window down.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    launchSilentInstaller(filePath);
+
+    // Quit shortly after spawning so the installer can replace files cleanly.
+    setTimeout(() => {
+      try {
+        app.quit();
+      } catch {
+        // ignore
+      }
+    }, 400);
+  } catch (error) {
+    updateState.status = "failed";
+    updateState.error = error instanceof Error ? error.message : String(error);
+    broadcastState();
+  }
+}
+
+ipcMain.handle("starlab-update:action", async (event, action) => {
+  const window = BrowserWindow.fromWebContents(event.sender) || getMainWindow();
+
+  if (action === "install") {
+    if (updateState.status === "available" || updateState.status === "failed") {
+      void startUpdateFlow();
+    }
+    return { ok: true };
+  }
+
+  if (action === "retry") {
+    if (updateState.status === "failed") {
+      updateState.status = "available";
+      void startUpdateFlow();
+    }
+    return { ok: true };
+  }
+
+  if (action === "dismiss") {
+    if (updateState.manifest && updateState.manifest.force_update) {
+      return { ok: false };
+    }
+    if (updateState.status !== "downloading" && updateState.status !== "installing") {
+      updateState.status = "idle";
+      updateState.error = null;
+      broadcastState();
+    }
+    return { ok: true };
+  }
+
+  if (action === "request-state") {
+    if (window && !window.isDestroyed()) {
+      window.webContents.send("starlab-update:state", snapshotState());
+    }
+    return { ok: true };
+  }
+
+  return { ok: false };
+});
 
 async function checkForUpdates(mainWindow) {
   if (!app.isPackaged && !process.env.STARLAB_CHECK_UPDATES_IN_DEV) {
@@ -131,41 +296,10 @@ async function checkForUpdates(mainWindow) {
     if (!manifest?.available || !manifest.download_url) return;
     if (compareVersions(manifest.latest_version, app.getVersion()) <= 0) return;
 
-    const detail = manifest.release_notes
-      ? `새 버전 ${manifest.latest_version}이 준비되었습니다.\n\n${manifest.release_notes}`
-      : `새 버전 ${manifest.latest_version}이 준비되었습니다.`;
-    const buttons = manifest.force_update ? ["다운로드"] : ["다운로드", "나중에"];
-    const result = await dialog.showMessageBox(mainWindow, {
-      type: "info",
-      title: "Starlab Code 업데이트",
-      message: "업데이트를 설치할 수 있습니다",
-      detail,
-      buttons,
-      defaultId: 0,
-      cancelId: manifest.force_update ? 0 : 1,
-      noLink: true,
-    });
-
-    if (result.response !== 0) return;
-
-    const filePath = await downloadUpdate(mainWindow, manifest);
-    const installResult = await dialog.showMessageBox(mainWindow, {
-      type: "question",
-      title: "다운로드 완료",
-      message: "업데이트 설치 파일을 다운로드했습니다",
-      detail: `다운로드 위치:\n${filePath}\n\n지금 설치 파일을 실행할까요?`,
-      buttons: ["지금 실행", "나중에"],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
-    });
-
-    if (installResult.response === 0) {
-      await shell.openPath(filePath);
-      if (manifest.force_update) {
-        app.quit();
-      }
-    }
+    updateState.manifest = manifest;
+    updateState.status = "available";
+    updateState.error = null;
+    await injectOverlay(mainWindow);
   } catch (error) {
     if (process.env.STARLAB_SHOW_UPDATE_ERRORS) {
       dialog.showErrorBox("업데이트 확인 실패", error instanceof Error ? error.message : String(error));
@@ -210,6 +344,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      preload: path.join(__dirname, "preload.cjs"),
     },
   });
 
@@ -229,6 +364,13 @@ function createWindow() {
     if (url !== appUrl && !url.startsWith(`${appUrl}/`) && !url.startsWith(`${appUrl}?`)) {
       event.preventDefault();
       shell.openExternal(url);
+    }
+  });
+
+  mainWindow.webContents.on("did-finish-load", () => {
+    // Re-attach overlay on every load so reloads / navigation don't lose it.
+    if (updateState.status !== "idle") {
+      void injectOverlay(mainWindow);
     }
   });
 
