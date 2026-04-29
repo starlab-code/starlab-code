@@ -2,9 +2,11 @@ import json
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Query
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlmodel import Session, select
 
 from . import auth, judge
@@ -17,6 +19,7 @@ from .models import (
     AssignmentGroupStudent,
     AssignmentRead,
     AssignmentType,
+    AssignmentUpdate,
     Category,
     ClassroomSummary,
     CodeExecutionResponse,
@@ -59,6 +62,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    if request.method == "PATCH" and request.url.path.startswith("/assignments/"):
+        for error in exc.errors():
+            loc = error.get("loc", ())
+            if len(loc) >= 2 and loc[0] == "body" and loc[1] == "assignment_type":
+                return JSONResponse(status_code=400, content={"detail": "잘못된 assignment_type입니다."})
+
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.on_event("startup")
@@ -970,6 +984,47 @@ def list_assignments(
 
     assignments = session.exec(select(Assignment).where(Assignment.student_id == current_user.id).order_by(Assignment.created_at.desc())).all()
     return build_assignment_reads(session, assignments)
+
+
+@app.patch("/assignments/{assignment_id}", response_model=AssignmentRead)
+def update_assignment(
+    assignment_id: int,
+    payload: AssignmentUpdate,
+    current_user: User = Depends(auth.require_teacher),
+    session: Session = Depends(get_session),
+):
+
+    """단일 과제 수정"""
+    assignment = session.get(Assignment, assignment_id)
+    if not assignment:
+        raise HTTPException(status_code=404, detail="과제를 찾을 수 없습니다.")
+
+    # 현재 teacher가 생성한 과제인지 확인
+    if assignment.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="이 과제를 수정할 권한이 없습니다.")
+
+    # problem_id 변경 시 문제 존재 여부 확인
+    if payload.problem_id is not None:
+        problem = session.get(Problem, payload.problem_id)
+        if not problem:
+            raise HTTPException(status_code=404, detail="문제를 찾을 수 없습니다.")
+        assignment.problem_id = payload.problem_id
+
+    # 나머지 필드 업데이트
+    if payload.title is not None:
+        assignment.title = payload.title
+    if payload.assignment_type is not None:
+        assignment.assignment_type = payload.assignment_type
+    if payload.due_at is not None:
+        assignment.due_at = payload.due_at
+    if payload.classroom_label is not None:
+        assignment.classroom_label = payload.classroom_label
+
+    session.add(assignment)
+    session.commit()
+    session.refresh(assignment)
+
+    return build_assignment_reads(session, [assignment])[0]
 
 
 @app.get("/submissions")
