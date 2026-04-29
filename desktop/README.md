@@ -93,7 +93,9 @@ STARLAB_DESKTOP_RELEASE_NOTES=Update message shown to users.
 STARLAB_DESKTOP_FORCE_UPDATE=false
 ```
 
-When users open an older installed app, they will see an update prompt. If they choose download, the installer is downloaded to their Downloads folder and they can run it from the app prompt.
+When users open an older installed app, an update card appears inside the existing window — no separate dialog. After the user clicks **지금 업데이트**, the installer downloads with a live progress bar in that same window, then runs silently (`/S`) and the app automatically restarts on the new version. The user does not need to close the app or run the installer manually.
+
+To verify the in-app flow during development, start the app with `STARLAB_CHECK_UPDATES_IN_DEV=1` so the update check runs even when not packaged. Use `STARLAB_SHOW_UPDATE_ERRORS=1` to surface fetch/install errors.
 
 ## Version rules
 
