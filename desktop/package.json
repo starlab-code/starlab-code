@@ -5,12 +5,13 @@
   "description": "Windows desktop app for Starlab Code.",
   "main": "src/main.cjs",
   "scripts": {
+    "prepare:icons": "node scripts/prepare-icons.cjs",
     "build:frontend": "node scripts/build-frontend.cjs",
     "dev": "electron .",
     "start": "electron .",
-    "pack": "electron-builder --dir",
-    "dist": "npm run build:frontend && electron-builder --win nsis",
-    "dist:remote": "electron-builder --win nsis"
+    "pack": "npm run prepare:icons && electron-builder --dir",
+    "dist": "npm run prepare:icons && npm run build:frontend && electron-builder --win nsis",
+    "dist:remote": "npm run prepare:icons && electron-builder --win nsis"
   },
   "dependencies": {
     "koffi": "^2.16.1"
@@ -30,9 +31,12 @@
       "package.json"
     ],
     "win": {
+      "icon": "assets/logo.ico",
       "target": "nsis"
     },
     "nsis": {
+      "installerIcon": "assets/logo.ico",
+      "uninstallerIcon": "assets/logo.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }
