@@ -1,4 +1,5 @@
 import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const AUTH_TOKEN_STORAGE_KEY = "starlab-code-token";
@@ -568,6 +569,43 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`verdict verdict-${tone}`}>{statusLabel(status)}</span>;
 }
 
+let _monoCharWidth: number | null = null;
+function monoCharWidth(): number {
+  if (_monoCharWidth !== null) return _monoCharWidth;
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return 7.5;
+  ctx.font = '12.5px "JetBrains Mono", Consolas, monospace';
+  _monoCharWidth = ctx.measureText("x").width;
+  return _monoCharWidth;
+}
+
+const AC_LINE_H = 12.5 * 1.6;
+const AC_PAD_T = 0.85 * 16;
+const AC_PAD_L = 0.9 * 16;
+
+function buildAutocompletions(fragment: string, code: string): string[] {
+  if (fragment.length < 1) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const word of [...PYTHON_KEYWORDS, ...PYTHON_BUILTINS]) {
+    if (word.startsWith(fragment) && word !== fragment) {
+      seen.add(word);
+      result.push(word);
+    }
+  }
+  const re = /[A-Za-z_][A-Za-z0-9_]*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code)) !== null) {
+    const w = m[0];
+    if (w.startsWith(fragment) && w !== fragment && !seen.has(w)) {
+      seen.add(w);
+      result.push(w);
+    }
+  }
+  return result.slice(0, 8);
+}
+
 function CodeEditor({
   value,
   onChange,
@@ -580,6 +618,10 @@ function CodeEditor({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lines = value.split("\n");
 
+  const [completions, setCompletions] = useState<string[]>([]);
+  const [acIndex, setAcIndex] = useState(0);
+  const [acPos, setAcPos] = useState<{ x: number; y: number } | null>(null);
+
   function syncScroll() {
     if (!gutterRef.current || !textareaRef.current || !highlightRef.current) return;
     gutterRef.current.scrollTop = textareaRef.current.scrollTop;
@@ -587,12 +629,107 @@ function CodeEditor({
     highlightRef.current.scrollLeft = textareaRef.current.scrollLeft;
   }
 
+  function calcDropdownPos(ta: HTMLTextAreaElement, code: string, pos: number) {
+    const lns = code.slice(0, pos).split("\n");
+    const lineIdx = lns.length - 1;
+    const colIdx = lns[lineIdx].length;
+    const rect = ta.getBoundingClientRect();
+    const cw = monoCharWidth();
+    return {
+      x: rect.left + AC_PAD_L + colIdx * cw - ta.scrollLeft,
+      y: rect.top + AC_PAD_T + lineIdx * AC_LINE_H - ta.scrollTop + AC_LINE_H + 4,
+    };
+  }
+
+  function refreshCompletions() {
+    const ta = textareaRef.current;
+    if (!ta || ta.selectionStart !== ta.selectionEnd) { setCompletions([]); return; }
+    const code = ta.value;
+    const pos = ta.selectionStart;
+    const lineStart = code.lastIndexOf("\n", pos - 1) + 1;
+    if (code.slice(lineStart, pos).includes("#")) { setCompletions([]); return; }
+    let start = pos;
+    while (start > 0 && /[A-Za-z0-9_]/.test(code[start - 1])) start--;
+    const fragment = code.slice(start, pos);
+    const list = buildAutocompletions(fragment, code);
+    setCompletions(list);
+    setAcIndex(0);
+    if (list.length > 0) setAcPos(calcDropdownPos(ta, code, pos));
+  }
+
+  function acceptCompletion(idx: number) {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const code = ta.value;
+    const pos = ta.selectionStart;
+    let start = pos;
+    while (start > 0 && /[A-Za-z0-9_]/.test(code[start - 1])) start--;
+    onChange(code.slice(0, start) + completions[idx] + code.slice(pos));
+    setCompletions([]);
+    const newPos = start + completions[idx].length;
+    requestAnimationFrame(() => ta.setSelectionRange(newPos, newPos));
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    const ta = e.currentTarget;
+
+    if (completions.length > 0) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setAcIndex(i => (i + 1) % completions.length); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setAcIndex(i => (i - 1 + completions.length) % completions.length); return; }
+      if (e.key === "Escape") { setCompletions([]); return; }
+      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); acceptCompletion(acIndex); return; }
+    }
+
+    const code = ta.value;
+    const ss = ta.selectionStart;
+    const se = ta.selectionEnd;
+
+    if (e.key === "Tab") {
+      e.preventDefault();
+      onChange(code.slice(0, ss) + "    " + code.slice(se));
+      requestAnimationFrame(() => ta.setSelectionRange(ss + 4, ss + 4));
+      return;
+    }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const lineStart = code.lastIndexOf("\n", ss - 1) + 1;
+      const currentLine = code.slice(lineStart, ss);
+      const indent = currentLine.match(/^(\s*)/)?.[1] ?? "";
+      const extra = /:\s*(#.*)?$/.test(currentLine.trimEnd()) ? "    " : "";
+      const insert = "\n" + indent + extra;
+      onChange(code.slice(0, ss) + insert + code.slice(se));
+      requestAnimationFrame(() => ta.setSelectionRange(ss + insert.length, ss + insert.length));
+      return;
+    }
+
+    if (e.key === "Backspace" && ss === se) {
+      const lineStart = code.lastIndexOf("\n", ss - 1) + 1;
+      const prefix = code.slice(lineStart, ss);
+      if (prefix.length > 0 && /^ +$/.test(prefix)) {
+        e.preventDefault();
+        const remove = prefix.length % 4 === 0 ? 4 : prefix.length % 4;
+        onChange(code.slice(0, ss - remove) + code.slice(ss));
+        requestAnimationFrame(() => ta.setSelectionRange(ss - remove, ss - remove));
+        return;
+      }
+    }
+  }
+
+  function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    onChange(e.target.value);
+    requestAnimationFrame(refreshCompletions);
+  }
+
+  function handleScroll() {
+    syncScroll();
+    setCompletions([]);
+  }
+
   return (
     <div className="editor-shell">
       <div className="editor-gutter" ref={gutterRef}>
-        {lines.map((_, index) => (
-          <span key={index + 1}>{index + 1}</span>
-        ))}
+        {lines.map((_, i) => <span key={i + 1}>{i + 1}</span>)}
       </div>
       <div className="editor-main">
         <pre className="editor-highlight" ref={highlightRef} aria-hidden="true">
@@ -604,10 +741,26 @@ function CodeEditor({
           spellCheck={false}
           value={value}
           wrap="off"
-          onChange={(event) => onChange(event.target.value)}
-          onScroll={syncScroll}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          onScroll={handleScroll}
+          onBlur={() => setTimeout(() => setCompletions([]), 150)}
         />
       </div>
+      {completions.length > 0 && acPos && createPortal(
+        <ul className="editor-autocomplete" style={{ top: acPos.y, left: acPos.x }}>
+          {completions.map((s, i) => (
+            <li
+              key={s}
+              className={i === acIndex ? "ac-active" : undefined}
+              onMouseDown={(e) => { e.preventDefault(); acceptCompletion(i); }}
+            >
+              {s}
+            </li>
+          ))}
+        </ul>,
+        document.body,
+      )}
     </div>
   );
 }
