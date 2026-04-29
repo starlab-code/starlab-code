@@ -335,6 +335,7 @@ const STATUS_LABELS: Record<string, string> = {
   accepted: "맞았습니다",
   wrong_answer: "틀렸습니다",
   runtime_error: "런타임 에러",
+  compile_error: "컴파일 에러",
   time_limit: "시간 초과",
   unsupported_language: "미지원 언어",
   passed: "통과",
@@ -347,7 +348,7 @@ function statusLabel(status: string) {
 function statusTone(status: string): "ok" | "bad" | "warn" | "neutral" {
   if (status === "accepted" || status === "passed") return "ok";
   if (status === "wrong_answer") return "bad";
-  if (status === "runtime_error" || status === "time_limit") return "warn";
+  if (status === "runtime_error" || status === "time_limit" || status === "compile_error") return "warn";
   return "neutral";
 }
 
