@@ -1,4 +1,5 @@
 import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const AUTH_TOKEN_STORAGE_KEY = "starlab-code-token";
@@ -334,6 +335,7 @@ const STATUS_LABELS: Record<string, string> = {
   accepted: "맞았습니다",
   wrong_answer: "틀렸습니다",
   runtime_error: "런타임 에러",
+  compile_error: "컴파일 에러",
   time_limit: "시간 초과",
   unsupported_language: "미지원 언어",
   passed: "통과",
@@ -346,7 +348,7 @@ function statusLabel(status: string) {
 function statusTone(status: string): "ok" | "bad" | "warn" | "neutral" {
   if (status === "accepted" || status === "passed") return "ok";
   if (status === "wrong_answer") return "bad";
-  if (status === "runtime_error" || status === "time_limit") return "warn";
+  if (status === "runtime_error" || status === "time_limit" || status === "compile_error") return "warn";
   return "neutral";
 }
 
@@ -457,6 +459,24 @@ const PYTHON_BUILTINS = new Set([
   "zip",
 ]);
 
+const C_KEYWORDS = new Set([
+  "auto", "break", "case", "char", "const", "continue", "default", "do",
+  "double", "else", "enum", "extern", "float", "for", "goto", "if",
+  "inline", "int", "long", "register", "return", "short", "signed",
+  "sizeof", "static", "struct", "switch", "typedef", "union", "unsigned",
+  "void", "volatile", "while",
+]);
+
+const C_BUILTINS = new Set([
+  "printf", "scanf", "sprintf", "sscanf", "fprintf", "fscanf",
+  "malloc", "calloc", "realloc", "free",
+  "strlen", "strcpy", "strncpy", "strcat", "strncat", "strcmp", "strncmp",
+  "memcpy", "memset", "memmove",
+  "fopen", "fclose", "fread", "fwrite",
+  "abs", "atoi", "atof", "atol", "exit",
+  "NULL", "EOF", "stdin", "stdout", "stderr",
+]);
+
 type HighlightToken = {
   text: string;
   tone: "text" | "comment" | "string" | "number" | "keyword" | "builtin" | "function";
@@ -541,11 +561,76 @@ function highlightPythonLine(line: string): HighlightToken[] {
   return tokens;
 }
 
-function renderHighlightedCode(code: string) {
+function highlightCLine(line: string): HighlightToken[] {
+  const tokens: HighlightToken[] = [];
+  let index = 0;
+
+  while (index < line.length) {
+    const char = line[index];
+
+    if (char === "#") {
+      tokens.push({ text: line.slice(index), tone: "keyword" });
+      break;
+    }
+
+    if (char === "/" && line[index + 1] === "/") {
+      tokens.push({ text: line.slice(index), tone: "comment" });
+      break;
+    }
+
+    if (char === '"' || char === "'") {
+      const quote = char;
+      let end = index + 1;
+      while (end < line.length) {
+        if (line[end] === "\\" && end + 1 < line.length) { end += 2; continue; }
+        if (line[end] === quote) { end += 1; break; }
+        end += 1;
+      }
+      tokens.push({ text: line.slice(index, end), tone: "string" });
+      index = end;
+      continue;
+    }
+
+    if (/\d/.test(char)) {
+      let end = index + 1;
+      while (end < line.length && /[\d_.xXa-fA-FuUlL]/.test(line[end])) end += 1;
+      tokens.push({ text: line.slice(index, end), tone: "number" });
+      index = end;
+      continue;
+    }
+
+    if (isIdentifierStart(char)) {
+      let end = index + 1;
+      while (end < line.length && isIdentifierPart(line[end])) end += 1;
+      const word = line.slice(index, end);
+      let tone: HighlightToken["tone"] = "text";
+      if (C_KEYWORDS.has(word)) {
+        tone = "keyword";
+      } else if (C_BUILTINS.has(word)) {
+        tone = "builtin";
+      } else {
+        let probe = end;
+        while (probe < line.length && /\s/.test(line[probe])) probe += 1;
+        if (line[probe] === "(") tone = "function";
+      }
+      tokens.push({ text: word, tone });
+      index = end;
+      continue;
+    }
+
+    tokens.push({ text: char, tone: "text" });
+    index += 1;
+  }
+
+  return tokens;
+}
+
+function renderHighlightedCode(code: string, language: "python" | "c" = "python") {
+  const highlighter = language === "c" ? highlightCLine : highlightPythonLine;
   const lines = code.split("\n");
   return lines.map((line, lineIndex) => (
     <Fragment key={lineIndex}>
-      {highlightPythonLine(line).map((token, tokenIndex) =>
+      {highlighter(line).map((token, tokenIndex) =>
         token.tone === "text" ? (
           <Fragment key={tokenIndex}>{token.text}</Fragment>
         ) : (
@@ -568,17 +653,70 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`verdict verdict-${tone}`}>{statusLabel(status)}</span>;
 }
 
+let _monoCharWidth: number | null = null;
+function monoCharWidth(): number {
+  if (_monoCharWidth !== null) return _monoCharWidth;
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return 7.5;
+  ctx.font = '12.5px "JetBrains Mono", Consolas, monospace';
+  _monoCharWidth = ctx.measureText("x").width;
+  return _monoCharWidth;
+}
+
+const AC_LINE_H = 12.5 * 1.6;
+const AC_PAD_T = 0.85 * 16;
+const AC_PAD_L = 0.9 * 16;
+
+type AcItem = { word: string; kind: "keyword" | "builtin" | "identifier" };
+
+function buildAutocompletions(fragment: string, code: string, language: "python" | "c" = "python"): AcItem[] {
+  if (fragment.length < 1) return [];
+  const seen = new Set<string>();
+  const result: AcItem[] = [];
+  const keywords = language === "c" ? C_KEYWORDS : PYTHON_KEYWORDS;
+  const builtins = language === "c" ? C_BUILTINS : PYTHON_BUILTINS;
+  for (const word of keywords) {
+    if (word.startsWith(fragment) && word !== fragment) {
+      seen.add(word);
+      result.push({ word, kind: "keyword" });
+    }
+  }
+  for (const word of builtins) {
+    if (word.startsWith(fragment) && word !== fragment) {
+      seen.add(word);
+      result.push({ word, kind: "builtin" });
+    }
+  }
+  const re = /[A-Za-z_][A-Za-z0-9_]*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code)) !== null) {
+    const w = m[0];
+    if (w.startsWith(fragment) && w !== fragment && !seen.has(w)) {
+      seen.add(w);
+      result.push({ word: w, kind: "identifier" });
+    }
+  }
+  return result.slice(0, 8);
+}
+
 function CodeEditor({
   value,
   onChange,
+  language = "python",
 }: {
   value: string;
   onChange: (next: string) => void;
+  language?: "python" | "c";
 }) {
   const gutterRef = useRef<HTMLDivElement | null>(null);
   const highlightRef = useRef<HTMLPreElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lines = value.split("\n");
+
+  const [completions, setCompletions] = useState<AcItem[]>([]);
+  const [acIndex, setAcIndex] = useState(0);
+  const [acPos, setAcPos] = useState<{ x: number; y: number } | null>(null);
 
   function syncScroll() {
     if (!gutterRef.current || !textareaRef.current || !highlightRef.current) return;
@@ -587,16 +725,113 @@ function CodeEditor({
     highlightRef.current.scrollLeft = textareaRef.current.scrollLeft;
   }
 
+  function calcDropdownPos(ta: HTMLTextAreaElement, code: string, pos: number) {
+    const lns = code.slice(0, pos).split("\n");
+    const lineIdx = lns.length - 1;
+    const colIdx = lns[lineIdx].length;
+    const rect = ta.getBoundingClientRect();
+    const cw = monoCharWidth();
+    return {
+      x: rect.left + AC_PAD_L + colIdx * cw - ta.scrollLeft,
+      y: rect.top + AC_PAD_T + lineIdx * AC_LINE_H - ta.scrollTop + AC_LINE_H + 4,
+    };
+  }
+
+  function refreshCompletions() {
+    const ta = textareaRef.current;
+    if (!ta || ta.selectionStart !== ta.selectionEnd) { setCompletions([]); return; }
+    const code = ta.value;
+    const pos = ta.selectionStart;
+    const lineStart = code.lastIndexOf("\n", pos - 1) + 1;
+    if (code.slice(lineStart, pos).includes("#")) { setCompletions([]); return; }
+    let start = pos;
+    while (start > 0 && /[A-Za-z0-9_]/.test(code[start - 1])) start--;
+    const fragment = code.slice(start, pos);
+    const list = buildAutocompletions(fragment, code, language);
+    setCompletions(list);
+    setAcIndex(0);
+    if (list.length > 0) setAcPos(calcDropdownPos(ta, code, pos));
+  }
+
+  function acceptCompletion(idx: number) {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const code = ta.value;
+    const pos = ta.selectionStart;
+    let start = pos;
+    while (start > 0 && /[A-Za-z0-9_]/.test(code[start - 1])) start--;
+    onChange(code.slice(0, start) + completions[idx].word + code.slice(pos));
+    setCompletions([]);
+    const newPos = start + completions[idx].word.length;
+    requestAnimationFrame(() => ta.setSelectionRange(newPos, newPos));
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    const ta = e.currentTarget;
+
+    if (completions.length > 0) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setAcIndex(i => (i + 1) % completions.length); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setAcIndex(i => (i - 1 + completions.length) % completions.length); return; }
+      if (e.key === "Escape") { setCompletions([]); return; }
+      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); acceptCompletion(acIndex); return; }
+    }
+
+    const code = ta.value;
+    const ss = ta.selectionStart;
+    const se = ta.selectionEnd;
+
+    if (e.key === "Tab") {
+      e.preventDefault();
+      onChange(code.slice(0, ss) + "    " + code.slice(se));
+      requestAnimationFrame(() => ta.setSelectionRange(ss + 4, ss + 4));
+      return;
+    }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const lineStart = code.lastIndexOf("\n", ss - 1) + 1;
+      const currentLine = code.slice(lineStart, ss);
+      const indent = currentLine.match(/^(\s*)/)?.[1] ?? "";
+      const extra = language === "c"
+        ? /\{\s*$/.test(currentLine.trimEnd()) ? "    " : ""
+        : /:\s*(#.*)?$/.test(currentLine.trimEnd()) ? "    " : "";
+      const insert = "\n" + indent + extra;
+      onChange(code.slice(0, ss) + insert + code.slice(se));
+      requestAnimationFrame(() => ta.setSelectionRange(ss + insert.length, ss + insert.length));
+      return;
+    }
+
+    if (e.key === "Backspace" && ss === se) {
+      const lineStart = code.lastIndexOf("\n", ss - 1) + 1;
+      const prefix = code.slice(lineStart, ss);
+      if (prefix.length > 0 && /^ +$/.test(prefix)) {
+        e.preventDefault();
+        const remove = prefix.length % 4 === 0 ? 4 : prefix.length % 4;
+        onChange(code.slice(0, ss - remove) + code.slice(ss));
+        requestAnimationFrame(() => ta.setSelectionRange(ss - remove, ss - remove));
+        return;
+      }
+    }
+  }
+
+  function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    onChange(e.target.value);
+    requestAnimationFrame(refreshCompletions);
+  }
+
+  function handleScroll() {
+    syncScroll();
+    setCompletions([]);
+  }
+
   return (
     <div className="editor-shell">
       <div className="editor-gutter" ref={gutterRef}>
-        {lines.map((_, index) => (
-          <span key={index + 1}>{index + 1}</span>
-        ))}
+        {lines.map((_, i) => <span key={i + 1}>{i + 1}</span>)}
       </div>
       <div className="editor-main">
         <pre className="editor-highlight" ref={highlightRef} aria-hidden="true">
-          {renderHighlightedCode(value)}
+          {renderHighlightedCode(value, language)}
         </pre>
         <textarea
           ref={textareaRef}
@@ -604,10 +839,26 @@ function CodeEditor({
           spellCheck={false}
           value={value}
           wrap="off"
-          onChange={(event) => onChange(event.target.value)}
-          onScroll={syncScroll}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          onScroll={handleScroll}
+          onBlur={() => setTimeout(() => setCompletions([]), 150)}
         />
       </div>
+      {completions.length > 0 && acPos && createPortal(
+        <ul className="editor-autocomplete" style={{ top: acPos.y, left: acPos.x }}>
+          {completions.map((s, i) => (
+            <li
+              key={s.word}
+              className={`ac-${s.kind}${i === acIndex ? " ac-active" : ""}`}
+              onMouseDown={(e) => { e.preventDefault(); acceptCompletion(i); }}
+            >
+              {s.word}
+            </li>
+          ))}
+        </ul>,
+        document.body,
+      )}
     </div>
   );
 }
@@ -634,7 +885,7 @@ export default function App() {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
   const [stream, setStream] = useState<StreamState | null>(null);
-  const [codeDrafts, setCodeDrafts] = useState<Record<number, string>>({});
+  const [codeDrafts, setCodeDrafts] = useState<Record<string, string>>({});
   const [view, setView] = useState<View>(isEditorWindow ? "solve" : "home");
   const [problemFilter, setProblemFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<number | "all">("all");
@@ -654,6 +905,7 @@ export default function App() {
   const [problemForm, setProblemForm] = useState<ProblemEditorForm>(emptyProblemForm());
   const [problemFormMode, setProblemFormMode] = useState<"create" | "edit">("create");
   const [assignmentDraft, setAssignmentDraft] = useState<AssignmentDraft>(emptyAssignmentDraft());
+  const [editorLanguage, setEditorLanguage] = useState<"python" | "c">("python");
   const [isLoading, setIsLoading] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -663,7 +915,11 @@ export default function App() {
   const [feedPaused, setFeedPaused] = useState(false);
   const lastFeedIdRef = useRef<number>(0);
 
-  const selectedCode = selectedProblemId ? codeDrafts[selectedProblemId] ?? "" : "";
+  const C_STARTER = "#include <stdio.h>\n\nint main()\n{\n    printf(\"Hello World!\\n\");\n    return 0;\n}";
+  const selectedCode = selectedProblemId
+    ? codeDrafts[`${selectedProblemId}-${editorLanguage}`]
+      ?? (editorLanguage === "c" ? C_STARTER : selectedProblem?.starter_code_python ?? "")
+    : "";
 
   const filteredProblems = useMemo(() => {
     return problems.filter((problem) => {
@@ -964,10 +1220,11 @@ export default function App() {
         const detail = await request<ProblemDetail>(`/problems/${selectedProblemId}`, {}, token);
         setSelectedProblem(detail);
         setCodeDrafts((current) => {
-          if (current[selectedProblemId]) return current;
+          const key = `${selectedProblemId}-python`;
+          if (current[key]) return current;
           return {
             ...current,
-            [selectedProblemId]: detail.starter_code_python || "import sys\ninput = sys.stdin.readline\n\n",
+            [key]: detail.starter_code_python || "import sys\ninput = sys.stdin.readline\n\n",
           };
         });
       } catch (caught) {
@@ -1230,8 +1487,9 @@ export default function App() {
     setStream({ kind, total: 0, completed: 0, results: [], done: false, summary: null });
     try {
       const payload = {
-        code: codeDrafts[selectedProblemId] ?? selectedProblem?.starter_code_python ?? "",
-        language: "python",
+        code: codeDrafts[`${selectedProblemId}-${editorLanguage}`]
+          ?? (editorLanguage === "c" ? C_STARTER : selectedProblem?.starter_code_python ?? ""),
+        language: editorLanguage,
         assignment_id:
           kind === "submit" && user?.role === "student"
             ? currentProblemAssignments.find((a) => a.student_id === user.id)?.id ?? null
@@ -1310,7 +1568,7 @@ export default function App() {
         if (kind === "submit") {
           await loadAppData(token, user ?? undefined);
           setMessage(
-            `제출 결과: ${statusLabel(finalSummary.status)} (${finalSummary.passed_tests}/${finalSummary.total_tests})`,
+            `제출 결과: ${statusLabel(finalSummary.status)}`,
           );
         } else {
           setMessage("예제 테스트 실행 완료");
@@ -1659,7 +1917,7 @@ export default function App() {
             onChangeCode={(next) =>
               setCodeDrafts((current) => ({
                 ...current,
-                ...(selectedProblemId ? { [selectedProblemId]: next } : {}),
+                ...(selectedProblemId ? { [`${selectedProblemId}-${editorLanguage}`]: next } : {}),
               }))
             }
             onRun={() => void executeStream("run")}
@@ -1675,6 +1933,8 @@ export default function App() {
             onOpenWindow={() => {
               if (selectedProblemId) openProblem(selectedProblemId);
             }}
+            language={editorLanguage}
+            onChangeLanguage={setEditorLanguage}
           />
         )}
 
@@ -3077,6 +3337,8 @@ function SolveView(props: {
   onEditProblem: () => void;
   popupMode: boolean;
   onOpenWindow: () => void;
+  language: "python" | "c";
+  onChangeLanguage: (lang: "python" | "c") => void;
 }) {
   const {
     user,
@@ -3094,6 +3356,8 @@ function SolveView(props: {
     onEditProblem,
     popupMode,
     onOpenWindow,
+    language,
+    onChangeLanguage,
   } = props;
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<number | null>(null);
   const selectedSubmission =
@@ -3126,7 +3390,6 @@ function SolveView(props: {
           <div className="sv-plimits">
             <span className="sv-plimit">시간 제한 {problem.time_limit_seconds.toFixed(1)}초</span>
             <span className="sv-plimit">메모리 {problem.memory_limit_mb}MB</span>
-            <span className="sv-plimit">Python 3</span>
           </div>
           {user.role === "teacher" && (
             <div className="sv-prob-actions">
@@ -3246,8 +3509,18 @@ function SolveView(props: {
       <section className="sv-right">
         <div className="sv-ed-chrome">
           <div className="sv-lang">
-            <span className="sv-langdot" />
-            Python 3
+            <button
+              className={`lang-tab${language === "python" ? " lang-tab-active" : ""}`}
+              onClick={() => onChangeLanguage("python")}
+            >
+              Python 3
+            </button>
+            <button
+              className={`lang-tab${language === "c" ? " lang-tab-active" : ""}`}
+              onClick={() => onChangeLanguage("c")}
+            >
+              C
+            </button>
           </div>
           <div className="sv-ed-btns">
             {popupMode ? (
@@ -3269,7 +3542,7 @@ function SolveView(props: {
         </div>
 
         <div className="sv-editor-surface">
-          <CodeEditor value={code} onChange={onChangeCode} />
+          <CodeEditor value={code} onChange={onChangeCode} language={language} />
         </div>
 
         {stream && <GradingPanel stream={stream} isRunning={isRunning} />}
@@ -4422,46 +4695,40 @@ function GradingPanel({ stream, isRunning }: { stream: StreamState; isRunning: b
         {slots.map((i) => {
           const r = stream.results.find((rr) => rr.index === i);
           const tone = r ? statusTone(r.status) : i === stream.completed && isRunning ? "running" : "pending";
+          const hasDetail = r && (r.expected || r.actual || r.stderr);
           return (
-            <li
-              key={i}
-              className={`sv-tcrow ${
-                tone === "ok" ? "sv-ok" : tone === "warn" ? "sv-warn" : tone === "bad" ? "sv-bad" : ""
-              }`}
-            >
-              <span className="sv-tcnum">테스트 {i + 1}</span>
-              {r ? (
-                <span>{statusLabel(r.status)}</span>
-              ) : i === stream.completed && isRunning ? (
-                <span>채점 중</span>
-              ) : (
-                <span>대기 중</span>
+            <Fragment key={i}>
+              <li
+                className={`sv-tcrow ${
+                  tone === "ok" ? "sv-ok" : tone === "warn" ? "sv-warn" : tone === "bad" ? "sv-bad" : ""
+                }`}
+              >
+                <span className="sv-tcnum">테스트 {i + 1}</span>
+                {r ? (
+                  <span>{statusLabel(r.status)}</span>
+                ) : i === stream.completed && isRunning ? (
+                  <span>채점 중</span>
+                ) : (
+                  <span>대기 중</span>
+                )}
+                {r && <span className="sv-tcms">{r.runtime_ms}ms</span>}
+              </li>
+              {hasDetail && (
+                <li className={`result-item result-${statusTone(r.status)}`}>
+                  <div>
+                    <strong>테스트 {r.index + 1} 상세</strong>
+                  </div>
+                  <div className="result-meta mono">
+                    {r.actual && <span>출력<br />{r.actual}</span>}
+                    {r.expected && <span>예상 출력값<br />{r.expected}</span>}
+                    {r.stderr && <span className="bad">에러: {r.stderr}</span>}
+                  </div>
+                </li>
               )}
-              {r && <span className="sv-tcms">{r.runtime_ms}ms</span>}
-            </li>
+            </Fragment>
           );
         })}
       </ul>
-
-      {stream.results.some((r) => r.expected || r.actual || r.stderr) && (
-        <ul className="result-list">
-          {stream.results
-            .filter((r) => r.expected || r.actual || r.stderr)
-            .map((r) => (
-              <li key={r.index} className={`result-item result-${statusTone(r.status)}`}>
-                <div>
-                  <strong>테스트 {r.index + 1} 상세</strong>
-                  <span className="mono muted">{r.runtime_ms}ms</span>
-                </div>
-                <div className="result-meta mono">
-                  {r.expected && <span>기댓값: {r.expected.split("\n").join(" / ")}</span>}
-                  {r.actual && <span>출력: {r.actual.split("\n").join(" / ")}</span>}
-                  {r.stderr && <span className="bad">에러: {r.stderr.split("\n").join(" / ")}</span>}
-                </div>
-              </li>
-            ))}
-        </ul>
-      )}
     </div>
   );
 }
