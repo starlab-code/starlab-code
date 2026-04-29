@@ -4575,46 +4575,40 @@ function GradingPanel({ stream, isRunning }: { stream: StreamState; isRunning: b
         {slots.map((i) => {
           const r = stream.results.find((rr) => rr.index === i);
           const tone = r ? statusTone(r.status) : i === stream.completed && isRunning ? "running" : "pending";
+          const hasDetail = r && (r.expected || r.actual || r.stderr);
           return (
-            <li
-              key={i}
-              className={`sv-tcrow ${
-                tone === "ok" ? "sv-ok" : tone === "warn" ? "sv-warn" : tone === "bad" ? "sv-bad" : ""
-              }`}
-            >
-              <span className="sv-tcnum">테스트 {i + 1}</span>
-              {r ? (
-                <span>{statusLabel(r.status)}</span>
-              ) : i === stream.completed && isRunning ? (
-                <span>채점 중</span>
-              ) : (
-                <span>대기 중</span>
+            <Fragment key={i}>
+              <li
+                className={`sv-tcrow ${
+                  tone === "ok" ? "sv-ok" : tone === "warn" ? "sv-warn" : tone === "bad" ? "sv-bad" : ""
+                }`}
+              >
+                <span className="sv-tcnum">테스트 {i + 1}</span>
+                {r ? (
+                  <span>{statusLabel(r.status)}</span>
+                ) : i === stream.completed && isRunning ? (
+                  <span>채점 중</span>
+                ) : (
+                  <span>대기 중</span>
+                )}
+                {r && <span className="sv-tcms">{r.runtime_ms}ms</span>}
+              </li>
+              {hasDetail && (
+                <li className={`result-item result-${statusTone(r.status)}`}>
+                  <div>
+                    <strong>테스트 {r.index + 1} 상세</strong>
+                  </div>
+                  <div className="result-meta mono">
+                    {r.expected && <span>예상 출력값<br />{r.expected}</span>}
+                    {r.actual && <span>출력<br />{r.actual}</span>}
+                    {r.stderr && <span className="bad">에러: {r.stderr}</span>}
+                  </div>
+                </li>
               )}
-              {r && <span className="sv-tcms">{r.runtime_ms}ms</span>}
-            </li>
+            </Fragment>
           );
         })}
       </ul>
-
-      {stream.results.some((r) => r.expected || r.actual || r.stderr) && (
-        <ul className="result-list">
-          {stream.results
-            .filter((r) => r.expected || r.actual || r.stderr)
-            .map((r) => (
-              <li key={r.index} className={`result-item result-${statusTone(r.status)}`}>
-                <div>
-                  <strong>테스트 {r.index + 1} 상세</strong>
-                  <span className="mono muted">{r.runtime_ms}ms</span>
-                </div>
-                <div className="result-meta mono">
-                  {r.expected && <span>예상 출력값: {r.expected.split("\n").join(" / ")}</span>}
-                  {r.actual && <span>출력: {r.actual.split("\n").join(" / ")}</span>}
-                  {r.stderr && <span className="bad">에러: {r.stderr.split("\n").join(" / ")}</span>}
-                </div>
-              </li>
-            ))}
-        </ul>
-      )}
     </div>
   );
 }
