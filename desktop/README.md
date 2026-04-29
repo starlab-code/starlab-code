@@ -93,9 +93,16 @@ STARLAB_DESKTOP_RELEASE_NOTES=Update message shown to users.
 STARLAB_DESKTOP_FORCE_UPDATE=false
 ```
 
-When users open an older installed app, an update card appears inside the existing window — no separate dialog. After the user clicks **지금 업데이트**, the installer downloads with a live progress bar in that same window, then runs silently (`/S`) and the app automatically restarts on the new version. The user does not need to close the app or run the installer manually.
+When users open an older installed app, the window opens directly on a dedicated update screen (no login is shown first, no native dialog appears). The installer downloads automatically with a live progress bar, then runs silently (`/S`) and the app re-launches on the new version. The user never has to click an "update" button or close the app.
 
-To verify the in-app flow during development, start the app with `STARLAB_CHECK_UPDATES_IN_DEV=1` so the update check runs even when not packaged. Use `STARLAB_SHOW_UPDATE_ERRORS=1` to surface fetch/install errors.
+Boot sequence inside the same window:
+
+1. `update.html` renders a splash with "업데이트 확인 중...".
+2. Main process queries `/desktop/update`.
+3. If no update is available (or the request times out / fails), the window navigates to the main app URL.
+4. If an update is available, the splash transitions to a download progress view, then to an "설치 중" view, and the installer is launched silently with auto-relaunch chained.
+
+To verify the flow during development, start the app with `STARLAB_CHECK_UPDATES_IN_DEV=1` so the update check runs even when not packaged.
 
 ## Version rules
 
