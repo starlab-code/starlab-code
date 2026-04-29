@@ -1402,6 +1402,9 @@ h3 { font-size: 0.95rem; font-weight: 700; }
   color: #c9d1d9;
   white-space: nowrap;
 }
+.editor-autocomplete li.ac-keyword { color: #4fc1ff; }
+.editor-autocomplete li.ac-builtin { color: #c586c0; }
+.editor-autocomplete li.ac-identifier { color: #dcdcaa; }
 .editor-autocomplete li:hover,
 .editor-autocomplete li.ac-active {
   background: #2d333b;

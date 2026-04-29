@@ -584,14 +584,22 @@ const AC_LINE_H = 12.5 * 1.6;
 const AC_PAD_T = 0.85 * 16;
 const AC_PAD_L = 0.9 * 16;
 
-function buildAutocompletions(fragment: string, code: string): string[] {
+type AcItem = { word: string; kind: "keyword" | "builtin" | "identifier" };
+
+function buildAutocompletions(fragment: string, code: string): AcItem[] {
   if (fragment.length < 1) return [];
   const seen = new Set<string>();
-  const result: string[] = [];
-  for (const word of [...PYTHON_KEYWORDS, ...PYTHON_BUILTINS]) {
+  const result: AcItem[] = [];
+  for (const word of PYTHON_KEYWORDS) {
     if (word.startsWith(fragment) && word !== fragment) {
       seen.add(word);
-      result.push(word);
+      result.push({ word, kind: "keyword" });
+    }
+  }
+  for (const word of PYTHON_BUILTINS) {
+    if (word.startsWith(fragment) && word !== fragment) {
+      seen.add(word);
+      result.push({ word, kind: "builtin" });
     }
   }
   const re = /[A-Za-z_][A-Za-z0-9_]*/g;
@@ -600,7 +608,7 @@ function buildAutocompletions(fragment: string, code: string): string[] {
     const w = m[0];
     if (w.startsWith(fragment) && w !== fragment && !seen.has(w)) {
       seen.add(w);
-      result.push(w);
+      result.push({ word: w, kind: "identifier" });
     }
   }
   return result.slice(0, 8);
@@ -618,7 +626,7 @@ function CodeEditor({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lines = value.split("\n");
 
-  const [completions, setCompletions] = useState<string[]>([]);
+  const [completions, setCompletions] = useState<AcItem[]>([]);
   const [acIndex, setAcIndex] = useState(0);
   const [acPos, setAcPos] = useState<{ x: number; y: number } | null>(null);
 
@@ -664,9 +672,9 @@ function CodeEditor({
     const pos = ta.selectionStart;
     let start = pos;
     while (start > 0 && /[A-Za-z0-9_]/.test(code[start - 1])) start--;
-    onChange(code.slice(0, start) + completions[idx] + code.slice(pos));
+    onChange(code.slice(0, start) + completions[idx].word + code.slice(pos));
     setCompletions([]);
-    const newPos = start + completions[idx].length;
+    const newPos = start + completions[idx].word.length;
     requestAnimationFrame(() => ta.setSelectionRange(newPos, newPos));
   }
 
@@ -751,11 +759,11 @@ function CodeEditor({
         <ul className="editor-autocomplete" style={{ top: acPos.y, left: acPos.x }}>
           {completions.map((s, i) => (
             <li
-              key={s}
-              className={i === acIndex ? "ac-active" : undefined}
+              key={s.word}
+              className={`ac-${s.kind}${i === acIndex ? " ac-active" : ""}`}
               onMouseDown={(e) => { e.preventDefault(); acceptCompletion(i); }}
             >
-              {s}
+              {s.word}
             </li>
           ))}
         </ul>,
