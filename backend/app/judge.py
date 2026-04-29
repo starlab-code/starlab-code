@@ -39,7 +39,9 @@ def _normalize_output(text: str) -> str:
 
 
 def _python_executable() -> str:
-    return shutil.which("python") or sys.executable
+    if sys.platform == "win32":
+        return sys.executable
+    return shutil.which("python3") or shutil.which("python") or sys.executable
 
 
 def _subprocess_env() -> dict:

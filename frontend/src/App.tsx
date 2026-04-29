@@ -4607,7 +4607,7 @@ function GradingPanel({ stream, isRunning }: { stream: StreamState; isRunning: b
                   <span className="mono muted">{r.runtime_ms}ms</span>
                 </div>
                 <div className="result-meta mono">
-                  {r.expected && <span>기댓값: {r.expected.split("\n").join(" / ")}</span>}
+                  {r.expected && <span>예상 출력값: {r.expected.split("\n").join(" / ")}</span>}
                   {r.actual && <span>출력: {r.actual.split("\n").join(" / ")}</span>}
                   {r.stderr && <span className="bad">에러: {r.stderr.split("\n").join(" / ")}</span>}
                 </div>
