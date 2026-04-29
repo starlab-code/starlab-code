@@ -825,6 +825,117 @@ def list_assignment_groups(
     return response
 
 
+def _get_assignments_by_group_key(
+    session: Session,
+    group_key: str,
+    teacher_id: int,
+) -> List[Assignment]:
+    """group_key에 해당하는 assignments 조회 (teacher 소유만)"""
+    parsed = _parse_group_key(group_key)
+    if not parsed:
+        return []
+
+    assignments = session.exec(
+        select(Assignment).where(
+            Assignment.teacher_id == teacher_id,
+            Assignment.title == parsed["title"],
+            Assignment.problem_id == parsed["problem_id"],
+            Assignment.assignment_type == AssignmentType(parsed["assignment_type"]),
+        )
+    ).all()
+
+    target_class = parsed["class_name"]
+    student_ids = {a.student_id for a in assignments}
+    students = {u.id: u for u in session.exec(select(User).where(User.id.in_(student_ids))).all()} if student_ids else {}
+
+    matched = []
+    for a in assignments:
+        student = students.get(a.student_id)
+        class_name = (a.classroom_label or (student.class_name if student else "") or "미지정").strip() or "미지정"
+        if class_name == target_class:
+            matched.append(a)
+
+    return matched
+
+
+@app.patch("/assignments/groups", response_model=List[AssignmentRead])
+def update_assignment_group(
+    group_key: str = Query(...),
+    payload: AssignmentUpdate = None,
+    current_user: User = Depends(auth.require_teacher),
+    session: Session = Depends(get_session),
+):
+    """그룹 단위 과제 수정"""
+    parsed = _parse_group_key(group_key)
+    if not parsed:
+        raise HTTPException(status_code=400, detail="잘못된 group_key입니다.")
+
+    matched = _get_assignments_by_group_key(session, group_key, current_user.id)
+    if not matched:
+        raise HTTPException(status_code=404, detail="해당 그룹의 과제를 찾을 수 없습니다.")
+
+    # problem_id 변경 시 문제 존재 여부 확인
+    if payload and payload.problem_id is not None:
+        problem = session.get(Problem, payload.problem_id)
+        if not problem:
+            raise HTTPException(status_code=404, detail="문제를 찾을 수 없습니다.")
+
+    # 일괄 업데이트
+    for assignment in matched:
+        if payload:
+            if payload.title is not None:
+                assignment.title = payload.title
+            if payload.problem_id is not None:
+                assignment.problem_id = payload.problem_id
+            if payload.assignment_type is not None:
+                assignment.assignment_type = payload.assignment_type
+            if payload.due_at is not None:
+                assignment.due_at = payload.due_at
+            if payload.classroom_label is not None:
+                assignment.classroom_label = payload.classroom_label
+        session.add(assignment)
+
+    session.commit()
+    for assignment in matched:
+        session.refresh(assignment)
+
+    return build_assignment_reads(session, matched)
+
+
+@app.delete("/assignments/groups")
+def delete_assignment_group(
+    group_key: str = Query(...),
+    current_user: User = Depends(auth.require_teacher),
+    session: Session = Depends(get_session),
+):
+    """그룹 단위 과제 삭제"""
+    parsed = _parse_group_key(group_key)
+    if not parsed:
+        raise HTTPException(status_code=400, detail="잘못된 group_key입니다.")
+
+    matched = _get_assignments_by_group_key(session, group_key, current_user.id)
+    if not matched:
+        raise HTTPException(status_code=404, detail="해당 그룹의 과제를 찾을 수 없습니다.")
+
+    assignment_ids = [a.id for a in matched]
+
+    # 제출 기록의 assignment_id를 null 처리
+    submissions = session.exec(
+        select(Submission).where(Submission.assignment_id.in_(assignment_ids))
+    ).all()
+    for submission in submissions:
+        submission.assignment_id = None
+        session.add(submission)
+
+    # 과제 삭제
+    for assignment in matched:
+        session.delete(assignment)
+
+    session.commit()
+
+    return {"ok": True, "deleted_count": len(matched)}
+
+
 @app.get("/assignments/groups/detail", response_model=List[AssignmentGroupStudent])
 def assignment_group_detail(
     group_key: str = Query(...),
