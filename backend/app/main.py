@@ -2,11 +2,9 @@ import json
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
-from fastapi.exception_handlers import request_validation_exception_handler
-from fastapi.exceptions import RequestValidationError
+from fastapi import Depends, FastAPI, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 
 from . import auth, judge
@@ -62,17 +60,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    if request.method == "PATCH" and request.url.path.startswith("/assignments/"):
-        for error in exc.errors():
-            loc = error.get("loc", ())
-            if len(loc) >= 2 and loc[0] == "body" and loc[1] == "assignment_type":
-                return JSONResponse(status_code=400, content={"detail": "잘못된 assignment_type입니다."})
-
-    return await request_validation_exception_handler(request, exc)
 
 
 @app.on_event("startup")
