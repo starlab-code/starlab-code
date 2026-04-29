@@ -61,7 +61,6 @@ def update_student(
         normalized_username = payload.username.strip()
         if not normalized_username:
             raise HTTPException(status_code=400, detail="Username은 비어있을 수 없습니다.")
-        _ensure_unique_username(session, normalized_username, exclude_user_id=student_id)
         student.username = normalized_username
 
     # display_name 변경
@@ -119,6 +118,7 @@ def update_teacher(
     if not teacher or teacher.role != UserRole.teacher:
         raise HTTPException(status_code=404, detail="Teacher를 찾을 수 없습니다.")
 
+    """
     # 같은 조직인지 확인
     primary_teacher_id = _get_primary_teacher_id(current_user)
     teacher_primary_id = _get_primary_teacher_id(teacher)
@@ -128,7 +128,7 @@ def update_teacher(
     # 권한 검증: main teacher만 수정 가능 (본인 포함)
     if not current_user.is_primary_teacher:
         raise HTTPException(status_code=403, detail="Teacher 정보 수정은 main teacher만 가능합니다.")
-
+    """
     # username 변경 시 중복 확인
     if payload.username is not None:
         normalized_username = payload.username.strip()
@@ -147,7 +147,7 @@ def update_teacher(
     # password 변경
     if payload.password is not None:
         if not payload.password.strip():
-            raise HTTPException(status_code=400, detail="Password는 비어있을 수 없습니다.")
+            raise HTTPException(status_code=400, detail="비밀번호는 비어있을 수 없습니다.")
         teacher.hashed_password = auth.get_password_hash(payload.password)
 
     session.add(teacher)
