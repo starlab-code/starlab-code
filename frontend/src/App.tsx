@@ -1,6 +1,10 @@
 import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+// Frontend logo PNG URL: replace frontend/public/desktop-logo.png with your own PNG.
+// Vite serves files in public/ from the site root, so keep this as "/desktop-logo.png"
+// unless you move the image to another public path.
+const LOGO_URL = "/desktop-logo.png";
 
 type UserRole = "teacher" | "student";
 type Difficulty = "beginner" | "basic" | "intermediate";
@@ -584,12 +588,8 @@ export default function App() {
   const editorWindowState = useMemo(() => readEditorWindowState(), []);
   const isEditorWindow = editorWindowState.enabled;
   const initialEditorProblemId = editorWindowState.problemId;
-  const [token, setToken] = useState<string | null>(() =>
-    typeof window === "undefined" ? null : localStorage.getItem("starlab-code-token"),
-  );
-  const [authBootstrapping, setAuthBootstrapping] = useState<boolean>(() =>
-    typeof window === "undefined" ? false : Boolean(localStorage.getItem("starlab-code-token")),
-  );
+  const [token, setToken] = useState<string | null>(null);
+  const [authBootstrapping, setAuthBootstrapping] = useState<boolean>(false);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [classrooms, setClassrooms] = useState<ClassroomOption[]>([]);
@@ -889,7 +889,6 @@ export default function App() {
       setProblemForm((current) =>
         current.category_id === 0 && defaultCategory !== 0 ? { ...current, category_id: defaultCategory } : current,
       );
-      localStorage.setItem("starlab-code-token", nextToken);
     } catch (caught) {
       const nextError = caught instanceof Error ? caught.message : "데이터를 불러오지 못했습니다.";
       setError(nextError);
@@ -904,13 +903,16 @@ export default function App() {
   }
 
   useEffect(() => {
-    const savedToken = localStorage.getItem("starlab-code-token");
-    if (savedToken) {
-      void loadAppData(savedToken);
-      return;
-    }
+    localStorage.removeItem("starlab-code-token");
     setAuthBootstrapping(false);
   }, []);
+
+  // Push the current sign-in role to the desktop shell so it can engage / release
+  // student kiosk mode. Safe no-op in browser builds where window.starlabApp is undefined.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.starlabApp) return;
+    void window.starlabApp.setRole(user?.role ?? null);
+  }, [user?.role]);
 
   useEffect(() => {
     if (!isEditorWindow || !selectedProblemId) return;
@@ -1158,7 +1160,11 @@ export default function App() {
     }
   }
 
-  function logout() {
+  async function logout() {
+    if (typeof window !== "undefined" && window.starlabApp) {
+      const result = await window.starlabApp.requestLogout();
+      if (!result.ok) return;
+    }
     localStorage.removeItem("starlab-code-token");
     setToken(null);
     setUser(null);
@@ -1406,7 +1412,9 @@ export default function App() {
           <aside className="auth-brand-panel">
             <div>
               <div className="auth-logo-row">
-                <span className="auth-logo-mark">SC</span>
+                <span className="auth-logo-mark">
+                  <img src={LOGO_URL} alt="" />
+                </span>
                 <strong>Starlab<span>Code</span></strong>
               </div>
               <h1>
@@ -1492,7 +1500,9 @@ export default function App() {
       <header className="topnav">
         <div className="topnav-inner">
           <button className="brand" onClick={() => navigate("home")}>
-            <span className="brand-mark">SC</span>
+            <span className="brand-mark">
+              <img src={LOGO_URL} alt="" />
+            </span>
             <span className="brand-text">Starlab Code</span>
           </button>
           <nav className="topnav-links">
@@ -1519,6 +1529,16 @@ export default function App() {
             <button className="btn btn-ghost btn-sm" onClick={logout}>
               로그아웃
             </button>
+            {typeof window !== "undefined" && window.starlabApp && (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  void window.starlabApp?.requestExit();
+                }}
+              >
+                나가기
+              </button>
+            )}
           </div>
         </div>
       </header>

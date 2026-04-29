@@ -1,7 +1,7 @@
 {
   "name": "starlab-code-desktop",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.6",
   "description": "Windows desktop app for Starlab Code.",
   "main": "src/main.cjs",
   "scripts": {
@@ -12,7 +12,9 @@
     "dist": "npm run build:frontend && electron-builder --win nsis",
     "dist:remote": "electron-builder --win nsis"
   },
-  "dependencies": {},
+  "dependencies": {
+    "koffi": "^2.16.1"
+  },
   "devDependencies": {
     "electron": "^31.7.7",
     "electron-builder": "^24.13.3"
@@ -22,6 +24,7 @@
     "productName": "Starlab Code",
     "files": [
       "src/**/*",
+      "assets/**/*",
       "app/**/*",
       "update-config.json",
       "package.json"

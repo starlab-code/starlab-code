@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';" />
+  <title>나가기 확인</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", "Apple SD Gothic Neo", sans-serif;
+      background: #0f172a;
+      color: #1f2937;
+      display: grid;
+      place-items: center;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .panel {
+      width: min(420px, calc(100vw - 40px));
+      background: #ffffff;
+      border: 1px solid #dbe4f0;
+      border-radius: 8px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+      padding: 24px 26px 22px;
+    }
+    h2 {
+      font-size: 17px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 6px;
+    }
+    p.subtitle {
+      font-size: 13px;
+      color: #475569;
+      line-height: 1.55;
+      margin-bottom: 18px;
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+      margin-bottom: 6px;
+    }
+    input[type="password"] {
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 120ms ease, box-shadow 120ms ease;
+      -webkit-user-select: text;
+      user-select: text;
+    }
+    input[type="password"]:focus {
+      border-color: #0b5fff;
+      box-shadow: 0 0 0 3px rgba(11, 95, 255, 0.18);
+    }
+    .error {
+      display: none;
+      font-size: 12.5px;
+      color: #b91c1c;
+      margin-top: 8px;
+      min-height: 18px;
+    }
+    .error.is-visible { display: block; }
+    .actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 18px;
+    }
+    button {
+      appearance: none;
+      border: 0;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 9px 18px;
+      border-radius: 8px;
+      font-family: inherit;
+    }
+    .btn-cancel { background: #f1f5f9; color: #1f2937; }
+    .btn-cancel:hover { background: #e2e8f0; }
+    .btn-ok { background: #0b5fff; color: #fff; }
+    .btn-ok:hover { background: #093fb0; }
+    .btn-ok[disabled] { background: #94a3b8; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <section class="panel" role="dialog" aria-labelledby="title" aria-modal="true">
+    <h2 id="title">나가기 확인</h2>
+    <p class="subtitle">학원 네트워크에서 나가거나 로그아웃하려면 관리자 비밀번호가 필요합니다.</p>
+
+    <label for="pw">비밀번호</label>
+    <input id="pw" type="password" autocomplete="off" autofocus />
+    <div class="error" id="error"></div>
+
+    <div class="actions">
+      <button type="button" class="btn-cancel" id="cancel">취소</button>
+      <button type="button" class="btn-ok" id="ok">확인</button>
+    </div>
+  </section>
+
+  <script>
+    (function () {
+      var input = document.getElementById('pw');
+      var error = document.getElementById('error');
+      var okBtn = document.getElementById('ok');
+      var cancelBtn = document.getElementById('cancel');
+      var submitting = false;
+
+      function setError(message) {
+        if (message) {
+          error.textContent = message;
+          error.classList.add('is-visible');
+        } else {
+          error.textContent = '';
+          error.classList.remove('is-visible');
+        }
+      }
+
+      async function submit() {
+        if (submitting) return;
+        var value = input.value || '';
+        if (!value) {
+          setError('비밀번호를 입력하세요.');
+          input.focus();
+          return;
+        }
+        submitting = true;
+        okBtn.disabled = true;
+        setError('');
+        try {
+          var ok = await window.starlabExitPrompt.submit(value);
+          if (!ok) {
+            setError('비밀번호가 올바르지 않습니다.');
+            input.value = '';
+            input.focus();
+          }
+        } catch (e) {
+          setError('확인 중 오류가 발생했습니다.');
+        } finally {
+          submitting = false;
+          okBtn.disabled = false;
+        }
+      }
+
+      function cancel() {
+        if (window.starlabExitPrompt && typeof window.starlabExitPrompt.cancel === 'function') {
+          window.starlabExitPrompt.cancel();
+        }
+      }
+
+      okBtn.addEventListener('click', submit);
+      cancelBtn.addEventListener('click', cancel);
+      input.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          submit();
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          cancel();
+        }
+      });
+
+      window.addEventListener('load', function () {
+        input.focus();
+      });
+    })();
+  </script>
+</body>
+</html>
