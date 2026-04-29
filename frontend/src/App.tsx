@@ -584,12 +584,8 @@ export default function App() {
   const editorWindowState = useMemo(() => readEditorWindowState(), []);
   const isEditorWindow = editorWindowState.enabled;
   const initialEditorProblemId = editorWindowState.problemId;
-  const [token, setToken] = useState<string | null>(() =>
-    typeof window === "undefined" ? null : localStorage.getItem("starlab-code-token"),
-  );
-  const [authBootstrapping, setAuthBootstrapping] = useState<boolean>(() =>
-    typeof window === "undefined" ? false : Boolean(localStorage.getItem("starlab-code-token")),
-  );
+  const [token, setToken] = useState<string | null>(null);
+  const [authBootstrapping, setAuthBootstrapping] = useState<boolean>(false);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [classrooms, setClassrooms] = useState<ClassroomOption[]>([]);
@@ -889,7 +885,6 @@ export default function App() {
       setProblemForm((current) =>
         current.category_id === 0 && defaultCategory !== 0 ? { ...current, category_id: defaultCategory } : current,
       );
-      localStorage.setItem("starlab-code-token", nextToken);
     } catch (caught) {
       const nextError = caught instanceof Error ? caught.message : "데이터를 불러오지 못했습니다.";
       setError(nextError);
@@ -904,13 +899,16 @@ export default function App() {
   }
 
   useEffect(() => {
-    const savedToken = localStorage.getItem("starlab-code-token");
-    if (savedToken) {
-      void loadAppData(savedToken);
-      return;
-    }
+    localStorage.removeItem("starlab-code-token");
     setAuthBootstrapping(false);
   }, []);
+
+  // Push the current sign-in role to the desktop shell so it can engage / release
+  // student kiosk mode. Safe no-op in browser builds where window.starlabApp is undefined.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.starlabApp) return;
+    void window.starlabApp.setRole(user?.role ?? null);
+  }, [user?.role]);
 
   useEffect(() => {
     if (!isEditorWindow || !selectedProblemId) return;
@@ -1158,7 +1156,11 @@ export default function App() {
     }
   }
 
-  function logout() {
+  async function logout() {
+    if (typeof window !== "undefined" && window.starlabApp) {
+      const result = await window.starlabApp.requestLogout();
+      if (!result.ok) return;
+    }
     localStorage.removeItem("starlab-code-token");
     setToken(null);
     setUser(null);
@@ -1519,6 +1521,16 @@ export default function App() {
             <button className="btn btn-ghost btn-sm" onClick={logout}>
               로그아웃
             </button>
+            {typeof window !== "undefined" && window.starlabApp && (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  void window.starlabApp?.requestExit();
+                }}
+              >
+                나가기
+              </button>
+            )}
           </div>
         </div>
       </header>

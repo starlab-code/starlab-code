@@ -1,9 +1,9 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
-const listeners = new Set();
+const updateListeners = new Set();
 
 ipcRenderer.on("starlab-update:state", (_event, payload) => {
-  for (const cb of listeners) {
+  for (const cb of updateListeners) {
     try {
       cb(payload);
     } catch {
@@ -18,10 +18,35 @@ contextBridge.exposeInMainWorld("starlabUpdate", {
   },
   onState(callback) {
     if (typeof callback !== "function") return () => {};
-    listeners.add(callback);
+    updateListeners.add(callback);
     ipcRenderer.invoke("starlab-update:action", "request-state").catch(() => {});
     return () => {
-      listeners.delete(callback);
+      updateListeners.delete(callback);
     };
+  },
+});
+
+// Main app bridge — used by the renderer to tell the desktop shell about the
+// signed-in user role and to request app exit.
+contextBridge.exposeInMainWorld("starlabApp", {
+  isDesktop: true,
+  setRole(role) {
+    return ipcRenderer.invoke("starlab-app:set-role", role || null);
+  },
+  requestExit() {
+    return ipcRenderer.invoke("starlab-app:request-exit");
+  },
+  requestLogout() {
+    return ipcRenderer.invoke("starlab-app:request-logout");
+  },
+});
+
+// Bridge used only inside the exit-password prompt window.
+contextBridge.exposeInMainWorld("starlabExitPrompt", {
+  submit(password) {
+    return ipcRenderer.invoke("starlab-exit-prompt:submit", password);
+  },
+  cancel() {
+    ipcRenderer.send("starlab-exit-prompt:cancel");
   },
 });

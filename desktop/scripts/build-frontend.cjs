@@ -7,6 +7,7 @@ const repoDir = path.resolve(desktopDir, "..");
 const frontendDir = path.join(repoDir, "frontend");
 const frontendDistDir = path.join(frontendDir, "dist");
 const desktopAppDir = path.join(desktopDir, "app");
+const updateConfigPath = path.join(desktopDir, "update-config.json");
 
 function loadRootEnv() {
   const envPath = path.join(repoDir, ".env");
@@ -69,10 +70,31 @@ if (build.status !== 0) {
 
 fs.rmSync(desktopAppDir, { recursive: true, force: true });
 fs.cpSync(frontendDistDir, desktopAppDir, { recursive: true });
-fs.writeFileSync(
-  path.join(desktopDir, "update-config.json"),
-  `${JSON.stringify({ apiBaseUrl }, null, 2)}\n`,
-);
+
+let existingConfig = {};
+try {
+  existingConfig = JSON.parse(fs.readFileSync(updateConfigPath, "utf8")) || {};
+} catch {
+  existingConfig = {};
+}
+
+const nextConfig = {
+  ...existingConfig,
+  apiBaseUrl,
+};
+
+if (process.env.STARLAB_ACADEMY_SSIDS) {
+  nextConfig.academySSIDs = process.env.STARLAB_ACADEMY_SSIDS
+    .split(",")
+    .map((ssid) => ssid.trim())
+    .filter(Boolean);
+}
+
+if (process.env.STARLAB_EXIT_PASSWORD) {
+  nextConfig.exitPassword = process.env.STARLAB_EXIT_PASSWORD;
+}
+
+fs.writeFileSync(updateConfigPath, `${JSON.stringify(nextConfig, null, 2)}\n`);
 
 console.log(`Packaged frontend copied to ${desktopAppDir}`);
 console.log(`API base URL: ${apiBaseUrl}`);
