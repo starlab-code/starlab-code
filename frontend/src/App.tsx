@@ -458,6 +458,24 @@ const PYTHON_BUILTINS = new Set([
   "zip",
 ]);
 
+const C_KEYWORDS = new Set([
+  "auto", "break", "case", "char", "const", "continue", "default", "do",
+  "double", "else", "enum", "extern", "float", "for", "goto", "if",
+  "inline", "int", "long", "register", "return", "short", "signed",
+  "sizeof", "static", "struct", "switch", "typedef", "union", "unsigned",
+  "void", "volatile", "while",
+]);
+
+const C_BUILTINS = new Set([
+  "printf", "scanf", "sprintf", "sscanf", "fprintf", "fscanf",
+  "malloc", "calloc", "realloc", "free",
+  "strlen", "strcpy", "strncpy", "strcat", "strncat", "strcmp", "strncmp",
+  "memcpy", "memset", "memmove",
+  "fopen", "fclose", "fread", "fwrite",
+  "abs", "atoi", "atof", "atol", "exit",
+  "NULL", "EOF", "stdin", "stdout", "stderr",
+]);
+
 type HighlightToken = {
   text: string;
   tone: "text" | "comment" | "string" | "number" | "keyword" | "builtin" | "function";
@@ -542,11 +560,76 @@ function highlightPythonLine(line: string): HighlightToken[] {
   return tokens;
 }
 
-function renderHighlightedCode(code: string) {
+function highlightCLine(line: string): HighlightToken[] {
+  const tokens: HighlightToken[] = [];
+  let index = 0;
+
+  while (index < line.length) {
+    const char = line[index];
+
+    if (char === "#") {
+      tokens.push({ text: line.slice(index), tone: "keyword" });
+      break;
+    }
+
+    if (char === "/" && line[index + 1] === "/") {
+      tokens.push({ text: line.slice(index), tone: "comment" });
+      break;
+    }
+
+    if (char === '"' || char === "'") {
+      const quote = char;
+      let end = index + 1;
+      while (end < line.length) {
+        if (line[end] === "\\" && end + 1 < line.length) { end += 2; continue; }
+        if (line[end] === quote) { end += 1; break; }
+        end += 1;
+      }
+      tokens.push({ text: line.slice(index, end), tone: "string" });
+      index = end;
+      continue;
+    }
+
+    if (/\d/.test(char)) {
+      let end = index + 1;
+      while (end < line.length && /[\d_.xXa-fA-FuUlL]/.test(line[end])) end += 1;
+      tokens.push({ text: line.slice(index, end), tone: "number" });
+      index = end;
+      continue;
+    }
+
+    if (isIdentifierStart(char)) {
+      let end = index + 1;
+      while (end < line.length && isIdentifierPart(line[end])) end += 1;
+      const word = line.slice(index, end);
+      let tone: HighlightToken["tone"] = "text";
+      if (C_KEYWORDS.has(word)) {
+        tone = "keyword";
+      } else if (C_BUILTINS.has(word)) {
+        tone = "builtin";
+      } else {
+        let probe = end;
+        while (probe < line.length && /\s/.test(line[probe])) probe += 1;
+        if (line[probe] === "(") tone = "function";
+      }
+      tokens.push({ text: word, tone });
+      index = end;
+      continue;
+    }
+
+    tokens.push({ text: char, tone: "text" });
+    index += 1;
+  }
+
+  return tokens;
+}
+
+function renderHighlightedCode(code: string, language: "python" | "c" = "python") {
+  const highlighter = language === "c" ? highlightCLine : highlightPythonLine;
   const lines = code.split("\n");
   return lines.map((line, lineIndex) => (
     <Fragment key={lineIndex}>
-      {highlightPythonLine(line).map((token, tokenIndex) =>
+      {highlighter(line).map((token, tokenIndex) =>
         token.tone === "text" ? (
           <Fragment key={tokenIndex}>{token.text}</Fragment>
         ) : (
@@ -586,17 +669,19 @@ const AC_PAD_L = 0.9 * 16;
 
 type AcItem = { word: string; kind: "keyword" | "builtin" | "identifier" };
 
-function buildAutocompletions(fragment: string, code: string): AcItem[] {
+function buildAutocompletions(fragment: string, code: string, language: "python" | "c" = "python"): AcItem[] {
   if (fragment.length < 1) return [];
   const seen = new Set<string>();
   const result: AcItem[] = [];
-  for (const word of PYTHON_KEYWORDS) {
+  const keywords = language === "c" ? C_KEYWORDS : PYTHON_KEYWORDS;
+  const builtins = language === "c" ? C_BUILTINS : PYTHON_BUILTINS;
+  for (const word of keywords) {
     if (word.startsWith(fragment) && word !== fragment) {
       seen.add(word);
       result.push({ word, kind: "keyword" });
     }
   }
-  for (const word of PYTHON_BUILTINS) {
+  for (const word of builtins) {
     if (word.startsWith(fragment) && word !== fragment) {
       seen.add(word);
       result.push({ word, kind: "builtin" });
@@ -617,9 +702,11 @@ function buildAutocompletions(fragment: string, code: string): AcItem[] {
 function CodeEditor({
   value,
   onChange,
+  language = "python",
 }: {
   value: string;
   onChange: (next: string) => void;
+  language?: "python" | "c";
 }) {
   const gutterRef = useRef<HTMLDivElement | null>(null);
   const highlightRef = useRef<HTMLPreElement | null>(null);
@@ -659,7 +746,7 @@ function CodeEditor({
     let start = pos;
     while (start > 0 && /[A-Za-z0-9_]/.test(code[start - 1])) start--;
     const fragment = code.slice(start, pos);
-    const list = buildAutocompletions(fragment, code);
+    const list = buildAutocompletions(fragment, code, language);
     setCompletions(list);
     setAcIndex(0);
     if (list.length > 0) setAcPos(calcDropdownPos(ta, code, pos));
@@ -704,7 +791,9 @@ function CodeEditor({
       const lineStart = code.lastIndexOf("\n", ss - 1) + 1;
       const currentLine = code.slice(lineStart, ss);
       const indent = currentLine.match(/^(\s*)/)?.[1] ?? "";
-      const extra = /:\s*(#.*)?$/.test(currentLine.trimEnd()) ? "    " : "";
+      const extra = language === "c"
+        ? /\{\s*$/.test(currentLine.trimEnd()) ? "    " : ""
+        : /:\s*(#.*)?$/.test(currentLine.trimEnd()) ? "    " : "";
       const insert = "\n" + indent + extra;
       onChange(code.slice(0, ss) + insert + code.slice(se));
       requestAnimationFrame(() => ta.setSelectionRange(ss + insert.length, ss + insert.length));
@@ -741,7 +830,7 @@ function CodeEditor({
       </div>
       <div className="editor-main">
         <pre className="editor-highlight" ref={highlightRef} aria-hidden="true">
-          {renderHighlightedCode(value)}
+          {renderHighlightedCode(value, language)}
         </pre>
         <textarea
           ref={textareaRef}
@@ -795,7 +884,7 @@ export default function App() {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
   const [stream, setStream] = useState<StreamState | null>(null);
-  const [codeDrafts, setCodeDrafts] = useState<Record<number, string>>({});
+  const [codeDrafts, setCodeDrafts] = useState<Record<string, string>>({});
   const [view, setView] = useState<View>(isEditorWindow ? "solve" : "home");
   const [problemFilter, setProblemFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<number | "all">("all");
@@ -815,6 +904,7 @@ export default function App() {
   const [problemForm, setProblemForm] = useState<ProblemEditorForm>(emptyProblemForm());
   const [problemFormMode, setProblemFormMode] = useState<"create" | "edit">("create");
   const [assignmentDraft, setAssignmentDraft] = useState<AssignmentDraft>(emptyAssignmentDraft());
+  const [editorLanguage, setEditorLanguage] = useState<"python" | "c">("python");
   const [isLoading, setIsLoading] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -824,7 +914,11 @@ export default function App() {
   const [feedPaused, setFeedPaused] = useState(false);
   const lastFeedIdRef = useRef<number>(0);
 
-  const selectedCode = selectedProblemId ? codeDrafts[selectedProblemId] ?? "" : "";
+  const C_STARTER = "#include <stdio.h>\n\nint main()\n{\n    printf(\"Hello World!\\n\");\n    return 0;\n}";
+  const selectedCode = selectedProblemId
+    ? codeDrafts[`${selectedProblemId}-${editorLanguage}`]
+      ?? (editorLanguage === "c" ? C_STARTER : selectedProblem?.starter_code_python ?? "")
+    : "";
 
   const filteredProblems = useMemo(() => {
     return problems.filter((problem) => {
@@ -1125,10 +1219,11 @@ export default function App() {
         const detail = await request<ProblemDetail>(`/problems/${selectedProblemId}`, {}, token);
         setSelectedProblem(detail);
         setCodeDrafts((current) => {
-          if (current[selectedProblemId]) return current;
+          const key = `${selectedProblemId}-python`;
+          if (current[key]) return current;
           return {
             ...current,
-            [selectedProblemId]: detail.starter_code_python || "import sys\ninput = sys.stdin.readline\n\n",
+            [key]: detail.starter_code_python || "import sys\ninput = sys.stdin.readline\n\n",
           };
         });
       } catch (caught) {
@@ -1391,8 +1486,9 @@ export default function App() {
     setStream({ kind, total: 0, completed: 0, results: [], done: false, summary: null });
     try {
       const payload = {
-        code: codeDrafts[selectedProblemId] ?? selectedProblem?.starter_code_python ?? "",
-        language: "python",
+        code: codeDrafts[`${selectedProblemId}-${editorLanguage}`]
+          ?? (editorLanguage === "c" ? C_STARTER : selectedProblem?.starter_code_python ?? ""),
+        language: editorLanguage,
         assignment_id:
           kind === "submit" && user?.role === "student"
             ? currentProblemAssignments.find((a) => a.student_id === user.id)?.id ?? null
@@ -1820,7 +1916,7 @@ export default function App() {
             onChangeCode={(next) =>
               setCodeDrafts((current) => ({
                 ...current,
-                ...(selectedProblemId ? { [selectedProblemId]: next } : {}),
+                ...(selectedProblemId ? { [`${selectedProblemId}-${editorLanguage}`]: next } : {}),
               }))
             }
             onRun={() => void executeStream("run")}
@@ -1836,6 +1932,8 @@ export default function App() {
             onOpenWindow={() => {
               if (selectedProblemId) openProblem(selectedProblemId);
             }}
+            language={editorLanguage}
+            onChangeLanguage={setEditorLanguage}
           />
         )}
 
@@ -3238,6 +3336,8 @@ function SolveView(props: {
   onEditProblem: () => void;
   popupMode: boolean;
   onOpenWindow: () => void;
+  language: "python" | "c";
+  onChangeLanguage: (lang: "python" | "c") => void;
 }) {
   const {
     user,
@@ -3255,6 +3355,8 @@ function SolveView(props: {
     onEditProblem,
     popupMode,
     onOpenWindow,
+    language,
+    onChangeLanguage,
   } = props;
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<number | null>(null);
   const selectedSubmission =
@@ -3287,7 +3389,6 @@ function SolveView(props: {
           <div className="sv-plimits">
             <span className="sv-plimit">시간 제한 {problem.time_limit_seconds.toFixed(1)}초</span>
             <span className="sv-plimit">메모리 {problem.memory_limit_mb}MB</span>
-            <span className="sv-plimit">Python 3</span>
           </div>
           {user.role === "teacher" && (
             <div className="sv-prob-actions">
@@ -3407,8 +3508,18 @@ function SolveView(props: {
       <section className="sv-right">
         <div className="sv-ed-chrome">
           <div className="sv-lang">
-            <span className="sv-langdot" />
-            Python 3
+            <button
+              className={`lang-tab${language === "python" ? " lang-tab-active" : ""}`}
+              onClick={() => onChangeLanguage("python")}
+            >
+              Python 3
+            </button>
+            <button
+              className={`lang-tab${language === "c" ? " lang-tab-active" : ""}`}
+              onClick={() => onChangeLanguage("c")}
+            >
+              C
+            </button>
           </div>
           <div className="sv-ed-btns">
             {popupMode ? (
@@ -3430,7 +3541,7 @@ function SolveView(props: {
         </div>
 
         <div className="sv-editor-surface">
-          <CodeEditor value={code} onChange={onChangeCode} />
+          <CodeEditor value={code} onChange={onChangeCode} language={language} />
         </div>
 
         {stream && <GradingPanel stream={stream} isRunning={isRunning} />}
