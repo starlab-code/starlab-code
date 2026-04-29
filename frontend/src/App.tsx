@@ -1,10 +1,38 @@
 import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const AUTH_TOKEN_STORAGE_KEY = "starlab-code-token";
 // Frontend logo PNG URL: replace frontend/public/desktop-logo.png with your own PNG.
 // Vite serves files in public/ from the site root, so keep this as "/desktop-logo.png"
 // unless you move the image to another public path.
 const LOGO_URL = "/desktop-logo.png";
+
+function readStoredAuthToken() {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveStoredAuthToken(nextToken: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, nextToken);
+  } catch {
+    // If storage is unavailable, the in-memory token still keeps this session usable.
+  }
+}
+
+function clearStoredAuthToken() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures so logout / exit can still continue.
+  }
+}
 
 type UserRole = "teacher" | "student";
 type Difficulty = "beginner" | "basic" | "intermediate";
@@ -589,7 +617,7 @@ export default function App() {
   const isEditorWindow = editorWindowState.enabled;
   const initialEditorProblemId = editorWindowState.problemId;
   const [token, setToken] = useState<string | null>(null);
-  const [authBootstrapping, setAuthBootstrapping] = useState<boolean>(false);
+  const [authBootstrapping, setAuthBootstrapping] = useState<boolean>(() => Boolean(readStoredAuthToken()));
   const [user, setUser] = useState<UserProfile | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [classrooms, setClassrooms] = useState<ClassroomOption[]>([]);
@@ -863,6 +891,7 @@ export default function App() {
       ];
 
       setToken(nextToken);
+      saveStoredAuthToken(nextToken);
       setUser(profile);
       setDashboard(dashboardResult);
       setCategories(categoriesResult);
@@ -892,7 +921,7 @@ export default function App() {
     } catch (caught) {
       const nextError = caught instanceof Error ? caught.message : "데이터를 불러오지 못했습니다.";
       setError(nextError);
-      localStorage.removeItem("starlab-code-token");
+      clearStoredAuthToken();
       setToken(null);
       setUser(null);
       setTeachers([]);
@@ -903,8 +932,14 @@ export default function App() {
   }
 
   useEffect(() => {
-    localStorage.removeItem("starlab-code-token");
-    setAuthBootstrapping(false);
+    const storedToken = readStoredAuthToken();
+    if (!storedToken) {
+      setAuthBootstrapping(false);
+      return;
+    }
+
+    setAuthBootstrapping(true);
+    void loadAppData(storedToken);
   }, []);
 
   // Push the current sign-in role to the desktop shell so it can engage / release
@@ -1165,7 +1200,7 @@ export default function App() {
       const result = await window.starlabApp.requestLogout();
       if (!result.ok) return;
     }
-    localStorage.removeItem("starlab-code-token");
+    clearStoredAuthToken();
     setToken(null);
     setUser(null);
     setTeachers([]);
@@ -1178,6 +1213,13 @@ export default function App() {
     setFeed([]);
     setStream(null);
     setMessage("로그아웃했습니다.");
+  }
+
+  async function requestDesktopExit() {
+    const result = await window.starlabApp?.requestExit();
+    if (result?.ok) {
+      clearStoredAuthToken();
+    }
   }
 
   async function executeStream(kind: "run" | "submit") {
@@ -1533,7 +1575,7 @@ export default function App() {
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={() => {
-                  void window.starlabApp?.requestExit();
+                  void requestDesktopExit();
                 }}
               >
                 나가기
