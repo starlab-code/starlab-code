@@ -12,6 +12,9 @@ const LOCAL_APP_DIR = path.join(__dirname, "..", "app");
 const UPDATE_CONFIG_PATH = path.join(__dirname, "..", "update-config.json");
 const UPDATE_HTML_PATH = path.join(__dirname, "update.html");
 const EXIT_PROMPT_HTML_PATH = path.join(__dirname, "exit-prompt.html");
+// Desktop shell logo PNG path: replace desktop/assets/logo.png with your own PNG.
+// This image is used for the Electron window icon when the desktop app starts.
+const APP_ICON_PATH = path.join(__dirname, "..", "assets", "logo.png");
 const UPDATE_FETCH_TIMEOUT_MS = 6000;
 
 function loadRootEnv() {
@@ -571,6 +574,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     title: "Starlab Code",
+    icon: APP_ICON_PATH,
     backgroundColor: "#eef2fb",
     autoHideMenuBar: true,
     show: false,

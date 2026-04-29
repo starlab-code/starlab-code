@@ -34,6 +34,13 @@
       letter-spacing: -0.6px;
       box-shadow: 0 14px 30px rgba(11, 95, 255, 0.28);
     }
+    .brand img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: contain;
+      padding: 7px;
+    }
     h1 {
       font-size: 22px;
       font-weight: 700;
@@ -142,7 +149,10 @@
 </head>
 <body>
   <main class="panel" role="status" aria-live="polite">
-    <div class="brand" aria-hidden="true">S</div>
+    <div class="brand" aria-hidden="true">
+      <!-- Desktop update screen logo PNG URL: replace desktop/assets/logo.png with your own PNG. -->
+      <img src="../assets/logo.png" alt="" />
+    </div>
     <h1 id="title">Starlab Code 시작 중</h1>
     <p class="subtitle" id="subtitle">잠시만 기다려 주세요.</p>
 

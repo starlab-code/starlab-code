@@ -1,6 +1,10 @@
 import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+// Frontend logo PNG URL: replace frontend/public/desktop-logo.png with your own PNG.
+// Vite serves files in public/ from the site root, so keep this as "/desktop-logo.png"
+// unless you move the image to another public path.
+const LOGO_URL = "/desktop-logo.png";
 
 type UserRole = "teacher" | "student";
 type Difficulty = "beginner" | "basic" | "intermediate";
@@ -1408,7 +1412,9 @@ export default function App() {
           <aside className="auth-brand-panel">
             <div>
               <div className="auth-logo-row">
-                <span className="auth-logo-mark">SC</span>
+                <span className="auth-logo-mark">
+                  <img src={LOGO_URL} alt="" />
+                </span>
                 <strong>Starlab<span>Code</span></strong>
               </div>
               <h1>
@@ -1494,7 +1500,9 @@ export default function App() {
       <header className="topnav">
         <div className="topnav-inner">
           <button className="brand" onClick={() => navigate("home")}>
-            <span className="brand-mark">SC</span>
+            <span className="brand-mark">
+              <img src={LOGO_URL} alt="" />
+            </span>
             <span className="brand-text">Starlab Code</span>
           </button>
           <nav className="topnav-links">
