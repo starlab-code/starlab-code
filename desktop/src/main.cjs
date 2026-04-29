@@ -12,6 +12,7 @@ const LOCAL_APP_DIR = path.join(__dirname, "..", "app");
 const UPDATE_CONFIG_PATH = path.join(__dirname, "..", "update-config.json");
 const UPDATE_HTML_PATH = path.join(__dirname, "update.html");
 const EXIT_PROMPT_HTML_PATH = path.join(__dirname, "exit-prompt.html");
+const AUTH_TOKEN_STORAGE_KEY = "starlab-code-token";
 // Desktop shell logo PNG path: replace desktop/assets/logo.png with your own PNG.
 // This image is used for the Electron window icon when the desktop app starts.
 const APP_ICON_PATH = path.join(__dirname, "..", "assets", "logo.png");
@@ -71,6 +72,7 @@ let mainWindowRef = null;
 let currentRole = null; // 'student' | 'teacher' | null
 let exitPromptWindow = null;
 let exitResolver = null;
+let isQuittingAfterStorageCleanup = false;
 
 function hasBundledApp() {
   return fs.existsSync(path.join(LOCAL_APP_DIR, "index.html"));
@@ -161,6 +163,20 @@ function broadcastState() {
   const wc = mainWindowRef.webContents;
   if (wc.isLoading()) return;
   wc.send("starlab-update:state", snapshotState());
+}
+
+async function clearRendererAuthToken() {
+  if (!mainWindowRef || mainWindowRef.isDestroyed()) return;
+  const wc = mainWindowRef.webContents;
+  if (wc.isDestroyed() || wc.isLoading()) return;
+  try {
+    await wc.executeJavaScript(
+      `try { window.localStorage.removeItem(${JSON.stringify(AUTH_TOKEN_STORAGE_KEY)}); true; } catch { false; }`,
+      true,
+    );
+  } catch {
+    // Best effort only: renderer-side logout also clears this token.
+  }
 }
 
 function shouldCheckForUpdates() {
@@ -493,6 +509,8 @@ async function requestStudentUnlock() {
 async function handleExitRequest() {
   const result = await requestStudentUnlock();
   if (result.ok) {
+    await clearRendererAuthToken();
+    isQuittingAfterStorageCleanup = true;
     setTimeout(() => app.quit(), 80);
   }
   return result;
@@ -683,6 +701,13 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+});
+
+app.on("before-quit", (event) => {
+  if (isQuittingAfterStorageCleanup) return;
+  event.preventDefault();
+  isQuittingAfterStorageCleanup = true;
+  void clearRendererAuthToken().finally(() => app.quit());
 });
 
 app.on("will-quit", () => {
