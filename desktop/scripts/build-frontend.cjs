@@ -62,6 +62,7 @@ const build = spawnSync(npmCommand, ["run", "build"], {
     VITE_API_BASE_URL: apiBaseUrl,
   },
   stdio: "inherit",
+  shell: process.platform === "win32",
 });
 
 if (build.status !== 0) {

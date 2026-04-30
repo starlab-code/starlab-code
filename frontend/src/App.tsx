@@ -677,8 +677,13 @@ function formatDate(value: string | null) {
   ).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
+// Server datetimes are UTC-naive (no Z suffix); append Z to force UTC interpretation.
+function toUTC(iso: string): string {
+  return iso.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(iso) ? iso : iso + "Z";
+}
+
 function timeAgo(iso: string) {
-  const t = new Date(iso).getTime();
+  const t = new Date(toUTC(iso)).getTime();
   if (Number.isNaN(t)) return "";
   const diff = Math.max(0, Date.now() - t);
   const sec = Math.floor(diff / 1000);
@@ -1350,7 +1355,7 @@ export default function App() {
       activity.push({ date: day, submitted: 0, accepted: 0 });
     }
     for (const s of submissions) {
-      const d = new Date(s.created_at);
+      const d = new Date(toUTC(s.created_at));
       d.setHours(0, 0, 0, 0);
       const idx = indexByKey.get(dayKey(d));
       if (idx === undefined) continue;
@@ -1407,7 +1412,7 @@ export default function App() {
       activity.push({ date: day, submitted: 0, accepted: 0 });
     }
     for (const s of submissions) {
-      const d = new Date(s.created_at);
+      const d = new Date(toUTC(s.created_at));
       d.setHours(0, 0, 0, 0);
       const idx = indexByKey.get(dayKey(d));
       if (idx === undefined) continue;
@@ -1419,7 +1424,7 @@ export default function App() {
     const todayKey = dayKey(today);
     const todayStudents = new Set<number>();
     for (const s of submissions) {
-      const d = new Date(s.created_at);
+      const d = new Date(toUTC(s.created_at));
       d.setHours(0, 0, 0, 0);
       if (dayKey(d) === todayKey) todayStudents.add(s.user_id);
     }
@@ -1430,7 +1435,7 @@ export default function App() {
     weekStart.setDate(weekStart.getDate() - 6);
     const studentWeek = new Map<number, { submitted: number; accepted: number; solved: Set<number> }>();
     for (const s of submissions) {
-      if (new Date(s.created_at).getTime() < weekStart.getTime()) continue;
+      if (new Date(toUTC(s.created_at)).getTime() < weekStart.getTime()) continue;
       let entry = studentWeek.get(s.user_id);
       if (!entry) {
         entry = { submitted: 0, accepted: 0, solved: new Set() };
@@ -4129,7 +4134,7 @@ function SolveView(props: {
                         {s.passed_tests}/{s.total_tests}
                       </td>
                       <td className="mono muted">{s.runtime_ms}ms</td>
-                      <td className="muted">{formatDate(s.created_at)}</td>
+                      <td className="muted">{formatDate(toUTC(s.created_at))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -4797,7 +4802,7 @@ function AssignmentsView(props: {
                       {row.best_total > 0 ? `${row.best_passed}/${row.best_total}` : "-"}
                     </td>
                     <td className="mono">{row.attempts}</td>
-                    <td className="muted">{row.last_submitted_at ? formatDate(row.last_submitted_at) : "-"}</td>
+                    <td className="muted">{row.last_submitted_at ? formatDate(toUTC(row.last_submitted_at)) : "-"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -4883,7 +4888,7 @@ function SubmissionsView(props: {
                       {s.passed_tests}/{s.total_tests}
                     </td>
                     <td className="mono muted">{s.runtime_ms}ms</td>
-                    <td className="muted">{formatDate(s.created_at)}</td>
+                    <td className="muted">{formatDate(toUTC(s.created_at))}</td>
                   </tr>
                 );
               })}
