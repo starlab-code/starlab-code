@@ -3985,6 +3985,7 @@ function SolveView(props: {
     onChangeLanguage,
   } = props;
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<number | null>(null);
+  const [codeModalOpen, setCodeModalOpen] = useState(false);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [leftPanelPct, setLeftPanelPct] = useState(() => {
     if (typeof window === "undefined") return 43;
@@ -3994,6 +3995,8 @@ function SolveView(props: {
   const [isResizing, setIsResizing] = useState(false);
   const selectedSubmission =
     submissions.find((submission) => submission.id === selectedSubmissionId) ?? submissions[0] ?? null;
+  const selectedCodeLines = selectedSubmission?.code.split("\n") ?? [];
+  const selectedLanguage: "python" | "c" = selectedSubmission?.language === "c" ? "c" : "python";
 
   useEffect(() => {
     if (submissions.length === 0) {
@@ -4137,8 +4140,11 @@ function SolveView(props: {
                   {submissions.map((s) => (
                     <tr
                       key={s.id}
-                      className={selectedSubmission?.id === s.id ? "sel" : ""}
-                      onClick={() => setSelectedSubmissionId(s.id)}
+                      className={selectedSubmission?.id === s.id ? "sel clickable" : "clickable"}
+                      onClick={() => {
+                        setSelectedSubmissionId(s.id);
+                        setCodeModalOpen(true);
+                      }}
                     >
                       <td>
                         <StatusBadge status={s.status} />
@@ -4152,24 +4158,6 @@ function SolveView(props: {
                   ))}
                 </tbody>
               </table>
-            )}
-
-            {selectedSubmission && (
-              <section>
-                <div className="sv-subcode-hdr">
-                  <div>
-                    <strong>제출 코드 보기</strong>
-                    <p className="muted">{formatDate(selectedSubmission.created_at)}</p>
-                  </div>
-                  <div className="sv-subcode-meta">
-                    <StatusBadge status={selectedSubmission.status} />
-                    <span className="mono muted">
-                      {selectedSubmission.passed_tests}/{selectedSubmission.total_tests}
-                    </span>
-                  </div>
-                </div>
-                <pre className="sv-subcode">{selectedSubmission.code}</pre>
-              </section>
             )}
           </div>
         )}
@@ -4226,6 +4214,44 @@ function SolveView(props: {
 
         {stream && <GradingPanel stream={stream} isRunning={isRunning} />}
       </section>
+
+      {codeModalOpen && selectedSubmission && createPortal(
+        <div className="submission-modal-backdrop" onClick={() => setCodeModalOpen(false)}>
+          <article className="submission-code-mockup submission-code-modal" onClick={(e) => e.stopPropagation()}>
+            <header className="submission-code-mockup-head">
+              <div>
+                <strong>{problem.title}</strong>
+                <p className="muted">{formatDate(toUTC(selectedSubmission.created_at))}</p>
+              </div>
+              <div className="submission-code-meta">
+                <StatusBadge status={selectedSubmission.status} />
+                <span className="mono muted">
+                  {selectedSubmission.passed_tests}/{selectedSubmission.total_tests}
+                </span>
+                <button
+                  type="button"
+                  className="submission-modal-close"
+                  onClick={() => setCodeModalOpen(false)}
+                  aria-label="제출 코드 닫기"
+                >
+                  x
+                </button>
+              </div>
+            </header>
+            <div className="submission-code-frame">
+              <pre className="submission-line-nums" aria-hidden="true">
+                {selectedCodeLines.map((_, index) => (
+                  <Fragment key={index}>{index + 1}{index < selectedCodeLines.length - 1 ? "\n" : ""}</Fragment>
+                ))}
+              </pre>
+              <pre className="submission-code-preview">
+                {renderHighlightedCode(selectedSubmission.code, selectedLanguage)}
+              </pre>
+            </div>
+          </article>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
@@ -4955,21 +4981,6 @@ function SubmissionsView(props: {
                 </button>
               </div>
             </header>
-            <div className="submission-code-toolbar">
-              <div className="submission-window-dots" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </div>
-              <span className="submission-code-file mono">
-                main.{selectedLanguage === "c" ? "c" : "py"}
-              </span>
-              <div className="submission-code-state">
-                <StatusBadge status={selectedSubmission.status} />
-                <span className="mono">{selectedSubmission.passed_tests}/{selectedSubmission.total_tests}</span>
-                <span className="mono">{selectedSubmission.runtime_ms}ms</span>
-              </div>
-            </div>
             <div className="submission-code-frame">
               <pre className="submission-line-nums" aria-hidden="true">
                 {selectedCodeLines.map((_, index) => (
