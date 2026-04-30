@@ -2,42 +2,13 @@ import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react
 import { createPortal } from "react-dom";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
-const AUTH_TOKEN_STORAGE_KEY = "starlab-code-token";
-// Frontend logo PNG URL: replace frontend/public/desktop-logo.png with your own PNG.
-// Vite serves files in public/ from the site root, so keep this as "/desktop-logo.png"
-// unless you move the image to another public path.
-const LOGO_URL = "/desktop-logo.png";
-
-function readStoredAuthToken() {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function saveStoredAuthToken(nextToken: string) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, nextToken);
-  } catch {
-    // If storage is unavailable, the in-memory token still keeps this session usable.
-  }
-}
-
-function clearStoredAuthToken() {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
-  } catch {
-    // Ignore storage failures so logout / exit can still continue.
-  }
-}
+const APP_VERSION = import.meta.env.VITE_APP_VERSION ?? "v0.1.0";
+const PREVIEW_TOKEN = "__starlab_ui_preview__";
 
 type UserRole = "teacher" | "student";
 type Difficulty = "beginner" | "basic" | "intermediate";
 type AssignmentType = "homework" | "classroom";
+type HealthState = "checking" | "ok" | "down";
 type View =
   | "home"
   | "problems"
@@ -313,6 +284,342 @@ const emptyStudentAccountDraft = (): StudentAccountDraft => ({
   class_name: "",
 });
 
+type PreviewData = {
+  user: UserProfile;
+  categories: Category[];
+  classrooms: ClassroomOption[];
+  teachers: UserProfile[];
+  students: UserProfile[];
+  problems: ProblemDetail[];
+  assignments: Assignment[];
+  assignmentGroups: AssignmentGroup[];
+  groupDetail: AssignmentGroupStudent[];
+  submissions: Submission[];
+  feed: SubmissionFeedItem[];
+  dashboard: DashboardSummary;
+};
+
+const previewCategories: Category[] = [
+  { id: 1, name: "구현", description: "입출력과 조건 처리를 연습합니다." },
+  { id: 2, name: "자료구조", description: "스택, 큐, 해시를 다룹니다." },
+  { id: 3, name: "탐색", description: "완전탐색, BFS, DFS를 연습합니다." },
+];
+
+function previewDate(days: number, hours = 0) {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000 + hours * 60 * 60 * 1000).toISOString();
+}
+
+function previewTestcases(): TestCase[] {
+  return Array.from({ length: 10 }, (_, index) => ({
+    id: index + 1,
+    input_data: index < 2 ? `${index + 2} ${index + 4}` : `${index + 1}\n${index + 2}`,
+    expected_output: index < 2 ? String(index + 6) : String(index + 3),
+    is_public: index < 3,
+    note: index < 3 ? "공개 예제" : "숨김 채점",
+  }));
+}
+
+const previewProblems: ProblemDetail[] = [
+  {
+    id: 101,
+    title: "두 수 더하기",
+    short_description: "입력된 두 정수를 더해 출력합니다.",
+    category_id: 1,
+    category_name: "구현",
+    difficulty: "beginner",
+    time_limit_seconds: 2,
+    supported_languages: ["python"],
+    statement: "공백으로 구분된 두 정수 A와 B가 주어집니다. 두 수의 합을 출력하세요.",
+    input_description: "첫째 줄에 정수 A와 B가 공백으로 주어집니다.",
+    output_description: "A+B를 출력합니다.",
+    constraints: "1 <= A, B <= 1,000",
+    sample_input: "3 4",
+    sample_output: "7",
+    starter_code_python: "import sys\ninput = sys.stdin.readline\n\na, b = map(int, input().split())\nprint(a + b)\n",
+    memory_limit_mb: 128,
+    public_testcases: previewTestcases().slice(0, 3),
+    all_testcases: previewTestcases(),
+  },
+  {
+    id: 102,
+    title: "괄호 균형 검사",
+    short_description: "스택으로 올바른 괄호 문자열을 판별합니다.",
+    category_id: 2,
+    category_name: "자료구조",
+    difficulty: "basic",
+    time_limit_seconds: 2,
+    supported_languages: ["python"],
+    statement: "괄호 문자열이 올바른 순서로 닫히는지 확인하세요. 올바르면 YES, 아니면 NO를 출력합니다.",
+    input_description: "첫째 줄에 괄호 문자열 S가 주어집니다.",
+    output_description: "올바른 괄호 문자열이면 YES, 아니면 NO를 출력합니다.",
+    constraints: "1 <= |S| <= 100,000",
+    sample_input: "(()())",
+    sample_output: "YES",
+    starter_code_python: "s = input().strip()\nstack = []\n\nfor ch in s:\n    if ch == '(':\n        stack.append(ch)\n    else:\n        if not stack:\n            print('NO')\n            break\n        stack.pop()\nelse:\n    print('YES' if not stack else 'NO')\n",
+    memory_limit_mb: 128,
+    public_testcases: previewTestcases().slice(0, 3),
+    all_testcases: previewTestcases(),
+  },
+  {
+    id: 103,
+    title: "미로 최단거리",
+    short_description: "BFS로 시작점에서 도착점까지의 거리를 구합니다.",
+    category_id: 3,
+    category_name: "탐색",
+    difficulty: "intermediate",
+    time_limit_seconds: 3,
+    supported_languages: ["python"],
+    statement: "N x M 미로에서 1은 이동 가능, 0은 벽입니다. 좌상단에서 우하단까지의 최단거리를 구하세요.",
+    input_description: "첫째 줄에 N, M이 주어지고 이어서 N개의 줄에 미로가 주어집니다.",
+    output_description: "도착할 수 있으면 최단거리, 없으면 -1을 출력합니다.",
+    constraints: "2 <= N, M <= 100",
+    sample_input: "4 4\n1111\n0011\n1110\n0011",
+    sample_output: "7",
+    starter_code_python: "from collections import deque\nimport sys\ninput = sys.stdin.readline\n\n# BFS 풀이를 작성해 보세요.\n",
+    memory_limit_mb: 256,
+    public_testcases: previewTestcases().slice(0, 3),
+    all_testcases: previewTestcases(),
+  },
+];
+
+function asProblemCard(problem: ProblemDetail): ProblemCard {
+  return {
+    id: problem.id,
+    title: problem.title,
+    short_description: problem.short_description,
+    category_id: problem.category_id,
+    category_name: problem.category_name,
+    difficulty: problem.difficulty,
+    time_limit_seconds: problem.time_limit_seconds,
+    supported_languages: problem.supported_languages,
+  };
+}
+
+function makePreviewData(role: UserRole): PreviewData {
+  const teacher: UserProfile = {
+    id: 1,
+    username: "preview_teacher",
+    display_name: "김별 선생님",
+    role: "teacher",
+    primary_teacher_id: 1,
+    created_by_teacher_id: null,
+    is_primary_teacher: true,
+    class_name: null,
+  };
+  const student: UserProfile = {
+    id: 101,
+    username: "preview_student",
+    display_name: "이하늘",
+    role: "student",
+    primary_teacher_id: 1,
+    created_by_teacher_id: 1,
+    is_primary_teacher: false,
+    class_name: "금요 2반",
+  };
+  const students: UserProfile[] = [
+    student,
+    { ...student, id: 102, username: "student_jun", display_name: "박준", class_name: "금요 2반" },
+    { ...student, id: 103, username: "student_mina", display_name: "정미나", class_name: "토요 1반" },
+  ];
+  const assignments: Assignment[] = [
+    {
+      id: 301,
+      title: "스택 기본 과제",
+      problem_id: 102,
+      problem_title: "괄호 균형 검사",
+      category_name: "자료구조",
+      student_id: role === "student" ? 101 : 101,
+      student_name: "이하늘",
+      teacher_name: "김별 선생님",
+      assignment_type: "homework",
+      due_at: previewDate(2),
+      classroom_label: "금요 2반",
+      submitted: role === "student" ? false : true,
+    },
+    {
+      id: 302,
+      title: "BFS 맛보기",
+      problem_id: 103,
+      problem_title: "미로 최단거리",
+      category_name: "탐색",
+      student_id: role === "student" ? 101 : 102,
+      student_name: role === "student" ? "이하늘" : "박준",
+      teacher_name: "김별 선생님",
+      assignment_type: "classroom",
+      due_at: previewDate(5),
+      classroom_label: "금요 2반",
+      submitted: false,
+    },
+  ];
+  const submissions: Submission[] =
+    role === "student"
+      ? [
+          {
+            id: 401,
+            problem_id: 101,
+            user_id: 101,
+            assignment_id: null,
+            language: "python",
+            code: previewProblems[0].starter_code_python,
+            status: "accepted",
+            passed_tests: 10,
+            total_tests: 10,
+            runtime_ms: 34,
+            created_at: previewDate(-1),
+          },
+          {
+            id: 402,
+            problem_id: 102,
+            user_id: 101,
+            assignment_id: 301,
+            language: "python",
+            code: "s = input().strip()\nprint('YES')\n",
+            status: "wrong_answer",
+            passed_tests: 6,
+            total_tests: 10,
+            runtime_ms: 28,
+            created_at: previewDate(-0.2),
+          },
+        ]
+      : [
+          {
+            id: 501,
+            problem_id: 101,
+            user_id: 101,
+            assignment_id: null,
+            language: "python",
+            code: previewProblems[0].starter_code_python,
+            status: "accepted",
+            passed_tests: 10,
+            total_tests: 10,
+            runtime_ms: 34,
+            created_at: previewDate(-1),
+          },
+          {
+            id: 502,
+            problem_id: 102,
+            user_id: 102,
+            assignment_id: 301,
+            language: "python",
+            code: "print('YES')",
+            status: "wrong_answer",
+            passed_tests: 6,
+            total_tests: 10,
+            runtime_ms: 28,
+            created_at: previewDate(-0.12),
+          },
+          {
+            id: 503,
+            problem_id: 103,
+            user_id: 103,
+            assignment_id: 302,
+            language: "python",
+            code: "# bfs",
+            status: "runtime_error",
+            passed_tests: 2,
+            total_tests: 10,
+            runtime_ms: 41,
+            created_at: previewDate(-0.04),
+          },
+        ];
+
+  const feed: SubmissionFeedItem[] = submissions.map((submission, index) => {
+    const owner = students.find((item) => item.id === submission.user_id) ?? student;
+    const problem = previewProblems.find((item) => item.id === submission.problem_id) ?? previewProblems[0];
+    return {
+      id: 700 + index,
+      student_id: owner.id,
+      student_name: owner.display_name,
+      student_username: owner.username,
+      class_name: owner.class_name,
+      problem_id: problem.id,
+      problem_title: problem.title,
+      category_name: problem.category_name,
+      assignment_id: submission.assignment_id,
+      assignment_title: assignments.find((item) => item.id === submission.assignment_id)?.title ?? null,
+      language: "python",
+      status: submission.status,
+      passed_tests: submission.passed_tests,
+      total_tests: submission.total_tests,
+      runtime_ms: submission.runtime_ms,
+      created_at: submission.created_at,
+    };
+  });
+
+  const assignmentGroups: AssignmentGroup[] = [
+    {
+      group_key: "preview-stack",
+      title: "스택 기본 과제",
+      problem_id: 102,
+      problem_title: "괄호 균형 검사",
+      category_name: "자료구조",
+      class_name: "금요 2반",
+      classroom_label: "금요 2반",
+      assignment_type: "homework",
+      due_at: previewDate(2),
+      created_at: previewDate(-3),
+      total_students: 2,
+      completed_students: 1,
+      completion_rate: 50,
+      assignment_ids: [301],
+    },
+  ];
+
+  const groupDetail: AssignmentGroupStudent[] = [
+    {
+      assignment_id: 301,
+      student_id: 101,
+      student_name: "이하늘",
+      student_username: "preview_student",
+      class_name: "금요 2반",
+      submitted: true,
+      best_status: "accepted",
+      best_passed: 10,
+      best_total: 10,
+      best_runtime_ms: 34,
+      attempts: 2,
+      last_submitted_at: previewDate(-0.5),
+    },
+    {
+      assignment_id: 302,
+      student_id: 102,
+      student_name: "박준",
+      student_username: "student_jun",
+      class_name: "금요 2반",
+      submitted: true,
+      best_status: "wrong_answer",
+      best_passed: 6,
+      best_total: 10,
+      best_runtime_ms: 28,
+      attempts: 1,
+      last_submitted_at: previewDate(-0.12),
+    },
+  ];
+
+  return {
+    user: role === "teacher" ? teacher : student,
+    categories: previewCategories,
+    classrooms: [
+      { name: "금요 2반", student_count: 2 },
+      { name: "토요 1반", student_count: 1 },
+    ],
+    teachers: [teacher, { ...teacher, id: 2, username: "teacher_sub", display_name: "오로라 선생님", is_primary_teacher: false }],
+    students,
+    problems: previewProblems,
+    assignments,
+    assignmentGroups,
+    groupDetail,
+    submissions,
+    feed,
+    dashboard: {
+      assigned_count: assignments.length,
+      completed_count: role === "student" ? 1 : 3,
+      total_problems: previewProblems.length,
+      categories: previewCategories,
+    },
+  };
+}
+
 async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers ?? {});
   if (!headers.has("Content-Type") && init.body && !(init.body instanceof FormData)) {
@@ -381,6 +688,33 @@ function timeAgo(iso: string) {
   const hr = Math.floor(min / 60);
   if (hr < 24) return `${hr}시간 전`;
   return `${Math.floor(hr / 24)}일 전`;
+}
+
+function formatHeaderClock(date: Date) {
+  const dateText = date.toLocaleDateString("ko-KR", {
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  });
+  const timeText = date.toLocaleTimeString("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return { dateText, timeText };
+}
+
+function formatStudyDuration(startedAt: number, now: Date) {
+  const diff = Math.max(0, now.getTime() - startedAt);
+  const totalMinutes = Math.floor(diff / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes}분`;
+  return `${hours}시간 ${minutes}분`;
+}
+
+function userInitial(name: string) {
+  return name.trim().slice(0, 1).toUpperCase() || "S";
 }
 
 function readEditorWindowState() {
@@ -653,6 +987,18 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`verdict verdict-${tone}`}>{statusLabel(status)}</span>;
 }
 
+function BrandMark({ className = "" }: { className?: string }) {
+  return (
+    <span className={`brand-mark starlab-logo ${className}`} aria-hidden="true">
+      <img src="/starlab-logo.png" alt="" />
+      <span className="logo-fallback">
+        <span className="logo-red">ST</span>
+        <span className="logo-star">A</span>
+        <span className="logo-red">R</span>
+        <span className="logo-gray">LAB</span>
+      </span>
+    </span>
+  );
 let _monoCharWidth: number | null = null;
 function monoCharWidth(): number {
   if (_monoCharWidth !== null) return _monoCharWidth;
@@ -867,8 +1213,12 @@ export default function App() {
   const editorWindowState = useMemo(() => readEditorWindowState(), []);
   const isEditorWindow = editorWindowState.enabled;
   const initialEditorProblemId = editorWindowState.problemId;
-  const [token, setToken] = useState<string | null>(null);
-  const [authBootstrapping, setAuthBootstrapping] = useState<boolean>(() => Boolean(readStoredAuthToken()));
+  const [token, setToken] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : localStorage.getItem("starlab-code-token"),
+  );
+  const [authBootstrapping, setAuthBootstrapping] = useState<boolean>(() =>
+    typeof window === "undefined" ? false : Boolean(localStorage.getItem("starlab-code-token")),
+  );
   const [user, setUser] = useState<UserProfile | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [classrooms, setClassrooms] = useState<ClassroomOption[]>([]);
@@ -887,6 +1237,7 @@ export default function App() {
   const [stream, setStream] = useState<StreamState | null>(null);
   const [codeDrafts, setCodeDrafts] = useState<Record<string, string>>({});
   const [view, setView] = useState<View>(isEditorWindow ? "solve" : "home");
+  const [viewHistory, setViewHistory] = useState<View[]>([]);
   const [problemFilter, setProblemFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<number | "all">("all");
   const [difficultyFilter, setDifficultyFilter] = useState<Difficulty | "all">("all");
@@ -913,7 +1264,14 @@ export default function App() {
   const [feed, setFeed] = useState<SubmissionFeedItem[]>([]);
   const [feedHighlightId, setFeedHighlightId] = useState<number | null>(null);
   const [feedPaused, setFeedPaused] = useState(false);
+  const [healthState, setHealthState] = useState<HealthState>("checking");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() =>
+    typeof window === "undefined" ? false : localStorage.getItem("starlab-sidebar-collapsed") === "1",
+  );
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [clockNow, setClockNow] = useState(() => new Date());
   const lastFeedIdRef = useRef<number>(0);
+  const studyStartedAtRef = useRef<number>(Date.now());
 
   const C_STARTER = "#include <stdio.h>\n\nint main()\n{\n    printf(\"Hello World!\\n\");\n    return 0;\n}";
   const selectedCode = selectedProblemId
@@ -937,6 +1295,8 @@ export default function App() {
 
   const currentProblemAssignments = assignments.filter((a) => a.problem_id === selectedProblemId);
   const myAssignments = user?.role === "student" ? assignments : [];
+  const clockParts = formatHeaderClock(clockNow);
+  const studyDuration = formatStudyDuration(studyStartedAtRef.current, clockNow);
 
   const studentStats = useMemo(() => {
     if (!user || user.role !== "student") return null;
@@ -1104,6 +1464,40 @@ export default function App() {
     setClassrooms([]);
   }
 
+  function enterPreviewMode(role: UserRole) {
+    const preview = makePreviewData(role);
+    const firstProblem = preview.problems[0];
+    localStorage.removeItem("starlab-code-token");
+    setToken(PREVIEW_TOKEN);
+    setUser(preview.user);
+    setCategories(preview.categories);
+    setClassrooms(preview.classrooms);
+    setTeachers(preview.teachers);
+    setStudents(preview.students);
+    setProblems(preview.problems.map(asProblemCard));
+    setAssignments(preview.assignments);
+    setAssignmentGroups(preview.assignmentGroups);
+    setGroupDetail([]);
+    setActiveGroupKey(null);
+    setSubmissions(preview.submissions);
+    setFeed(preview.feed);
+    setDashboard(preview.dashboard);
+    setSelectedProblemId(firstProblem.id);
+    setSelectedProblem(firstProblem);
+    setCodeDrafts(
+      Object.fromEntries(preview.problems.map((problem) => [problem.id, problem.starter_code_python])),
+    );
+    setProblemForm(emptyProblemForm(preview.categories[0]?.id ?? 0));
+    setAssignmentDraft(emptyAssignmentDraft());
+    setStream(null);
+    setHealthState("ok");
+    setViewHistory([]);
+    setView("home");
+    setProfileMenuOpen(false);
+    setError(null);
+    setMessage(`${role === "teacher" ? "선생님" : "학생"} UI 미리보기입니다. 저장 없이 화면만 확인할 수 있어요.`);
+  }
+
   async function loadAppData(nextToken: string, knownUser?: UserProfile) {
     setIsLoading(true);
     setError(null);
@@ -1147,7 +1541,6 @@ export default function App() {
       ];
 
       setToken(nextToken);
-      saveStoredAuthToken(nextToken);
       setUser(profile);
       setDashboard(dashboardResult);
       setCategories(categoriesResult);
@@ -1174,10 +1567,11 @@ export default function App() {
       setProblemForm((current) =>
         current.category_id === 0 && defaultCategory !== 0 ? { ...current, category_id: defaultCategory } : current,
       );
+      localStorage.setItem("starlab-code-token", nextToken);
     } catch (caught) {
       const nextError = caught instanceof Error ? caught.message : "데이터를 불러오지 못했습니다.";
       setError(nextError);
-      clearStoredAuthToken();
+      localStorage.removeItem("starlab-code-token");
       setToken(null);
       setUser(null);
       setTeachers([]);
@@ -1188,22 +1582,43 @@ export default function App() {
   }
 
   useEffect(() => {
-    const storedToken = readStoredAuthToken();
-    if (!storedToken) {
-      setAuthBootstrapping(false);
+    const savedToken = localStorage.getItem("starlab-code-token");
+    if (savedToken) {
+      void loadAppData(savedToken);
       return;
     }
-
-    setAuthBootstrapping(true);
-    void loadAppData(storedToken);
+    setAuthBootstrapping(false);
   }, []);
 
-  // Push the current sign-in role to the desktop shell so it can engage / release
-  // student kiosk mode. Safe no-op in browser builds where window.starlabApp is undefined.
   useEffect(() => {
-    if (typeof window === "undefined" || !window.starlabApp) return;
-    void window.starlabApp.setRole(user?.role ?? null);
-  }, [user?.role]);
+    const intervalId = window.setInterval(() => setClockNow(new Date()), 30_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("starlab-sidebar-collapsed", sidebarCollapsed ? "1" : "0");
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    if (isEditorWindow || isPreviewMode) return;
+    let alive = true;
+
+    async function checkHealth() {
+      try {
+        const response = await fetch(`${API_BASE_URL}/health`);
+        if (alive) setHealthState(response.ok ? "ok" : "down");
+      } catch {
+        if (alive) setHealthState("down");
+      }
+    }
+
+    void checkHealth();
+    const intervalId = window.setInterval(checkHealth, 60_000);
+    return () => {
+      alive = false;
+      window.clearInterval(intervalId);
+    };
+  }, [isEditorWindow, isPreviewMode]);
 
   useEffect(() => {
     if (!isEditorWindow || !selectedProblemId) return;
@@ -1215,6 +1630,18 @@ export default function App() {
 
   useEffect(() => {
     if (!token || !selectedProblemId) return;
+    if (isPreviewMode) {
+      const detail = previewProblems.find((problem) => problem.id === selectedProblemId) ?? null;
+      setSelectedProblem(detail);
+      if (detail) {
+        setCodeDrafts((current) =>
+          current[selectedProblemId]
+            ? current
+            : { ...current, [selectedProblemId]: detail.starter_code_python },
+        );
+      }
+      return;
+    }
     setSelectedProblem((current) => (current && current.id === selectedProblemId ? current : null));
     const loadProblem = async () => {
       try {
@@ -1233,11 +1660,11 @@ export default function App() {
       }
     };
     void loadProblem();
-  }, [token, selectedProblemId]);
+  }, [token, selectedProblemId, isPreviewMode]);
 
   // Teacher live feed polling
   useEffect(() => {
-    if (!token || !user || user.role !== "teacher" || feedPaused) return;
+    if (!token || !user || user.role !== "teacher" || feedPaused || isPreviewMode) return;
     const intervalId = window.setInterval(async () => {
       try {
         const sinceId = lastFeedIdRef.current;
@@ -1264,10 +1691,25 @@ export default function App() {
       }
     }, 4000);
     return () => window.clearInterval(intervalId);
-  }, [token, user, feedPaused]);
+  }, [token, user, feedPaused, isPreviewMode]);
 
   function navigate(next: View) {
-    setView(next);
+    setView((current) => {
+      if (current === next) return current;
+      setViewHistory((history) => [...history, current].slice(-16));
+      return next;
+    });
+    setProfileMenuOpen(false);
+    setMessage(null);
+    setError(null);
+  }
+
+  function goBackView() {
+    const previous = viewHistory[viewHistory.length - 1];
+    if (!previous) return;
+    setView(previous);
+    setViewHistory((history) => history.slice(0, -1));
+    setProfileMenuOpen(false);
     setMessage(null);
     setError(null);
   }
@@ -1276,6 +1718,11 @@ export default function App() {
     setSelectedProblemId(problemId);
     setStream(null);
     setSolvePane("problem");
+    if (isPreviewMode) {
+      setSelectedProblem(previewProblems.find((problem) => problem.id === problemId) ?? null);
+      navigate("solve");
+      return;
+    }
     if (isEditorWindow) {
       navigate("solve");
       return;
@@ -1354,6 +1801,10 @@ export default function App() {
     if (!token || !user || user.role !== "teacher") return;
     setError(null);
     setMessage(null);
+    if (isPreviewMode) {
+      setMessage("UI 미리보기에서는 계정이 실제로 저장되지 않습니다.");
+      return;
+    }
     try {
       const created = await request<UserProfile>(
         "/users/teachers",
@@ -1376,6 +1827,10 @@ export default function App() {
     if (!token || !user || user.role !== "teacher") return;
     setError(null);
     setMessage(null);
+    if (isPreviewMode) {
+      setMessage("UI 미리보기에서는 학생 계정이 실제로 저장되지 않습니다.");
+      return;
+    }
     try {
       const created = await request<UserProfile>(
         "/users/students",
@@ -1395,6 +1850,10 @@ export default function App() {
 
   async function handleDeleteTeacher(teacherId: number) {
     if (!token || !user || user.role !== "teacher") return;
+    if (isPreviewMode) {
+      setMessage("UI 미리보기에서는 계정 삭제가 실행되지 않습니다.");
+      return;
+    }
     const teacher = teachers.find((item) => item.id === teacherId);
     if (!teacher || teacher.is_primary_teacher) return;
     if (!window.confirm(`${teacher.display_name} 선생님 계정을 삭제할까요? 담당 학생은 마스터 선생님에게 이관됩니다.`)) {
@@ -1413,6 +1872,10 @@ export default function App() {
 
   async function handleDeleteStudent(studentId: number) {
     if (!token || !user || user.role !== "teacher") return;
+    if (isPreviewMode) {
+      setMessage("UI 미리보기에서는 학생 삭제가 실행되지 않습니다.");
+      return;
+    }
     const student = students.find((item) => item.id === studentId);
     if (!student) return;
     if (!window.confirm(`${student.display_name} 학생 계정과 관련 과제/제출 기록을 삭제할까요?`)) {
@@ -1453,12 +1916,8 @@ export default function App() {
     }
   }
 
-  async function logout() {
-    if (typeof window !== "undefined" && window.starlabApp) {
-      const result = await window.starlabApp.requestLogout();
-      if (!result.ok) return;
-    }
-    clearStoredAuthToken();
+  function logout() {
+    localStorage.removeItem("starlab-code-token");
     setToken(null);
     setUser(null);
     setTeachers([]);
@@ -1470,14 +1929,9 @@ export default function App() {
     setSubmissions([]);
     setFeed([]);
     setStream(null);
+    setViewHistory([]);
+    setProfileMenuOpen(false);
     setMessage("로그아웃했습니다.");
-  }
-
-  async function requestDesktopExit() {
-    const result = await window.starlabApp?.requestExit();
-    if (result?.ok) {
-      clearStoredAuthToken();
-    }
   }
 
   async function executeStream(kind: "run" | "submit") {
@@ -1487,6 +1941,30 @@ export default function App() {
     setMessage(null);
     setStream({ kind, total: 0, completed: 0, results: [], done: false, summary: null });
     try {
+      if (isPreviewMode) {
+        const results: ExecutionResult[] = [
+          { index: 0, status: "passed", stdout: "7", stderr: "", expected: "7", actual: "7", runtime_ms: 18 },
+          { index: 1, status: "passed", stdout: "12", stderr: "", expected: "12", actual: "12", runtime_ms: 21 },
+          { index: 2, status: kind === "run" ? "passed" : "wrong_answer", stdout: "", stderr: "", expected: "YES", actual: kind === "run" ? "YES" : "NO", runtime_ms: 25 },
+        ];
+        const passedTests = results.filter((result) => result.status === "passed").length;
+        await new Promise((resolve) => window.setTimeout(resolve, 350));
+        setStream({
+          kind,
+          total: results.length,
+          completed: results.length,
+          results,
+          done: true,
+          summary: {
+            status: passedTests === results.length ? "accepted" : "wrong_answer",
+            passed_tests: passedTests,
+            total_tests: results.length,
+            runtime_ms: results.reduce((sum, result) => sum + result.runtime_ms, 0),
+          },
+        });
+        setMessage(kind === "run" ? "미리보기 예제 실행 완료" : "미리보기 제출 결과를 표시했습니다.");
+        return;
+      }
       const payload = {
         code: codeDrafts[`${selectedProblemId}-${editorLanguage}`]
           ?? (editorLanguage === "c" ? C_STARTER : selectedProblem?.starter_code_python ?? ""),
@@ -1587,6 +2065,10 @@ export default function App() {
     if (!token) return;
     setError(null);
     setMessage(null);
+    if (isPreviewMode) {
+      setMessage("UI 미리보기에서는 문제 저장이 실행되지 않습니다.");
+      return;
+    }
     try {
       const payload = {
         ...problemForm,
@@ -1619,6 +2101,11 @@ export default function App() {
     if (!token) return;
     setError(null);
     setMessage(null);
+    if (isPreviewMode) {
+      setMessage("UI 미리보기에서는 과제 배정이 실제로 저장되지 않습니다.");
+      navigate("assignments");
+      return;
+    }
     if (!assignmentDraft.problem_id) {
       setError("문제를 먼저 선택해 주세요.");
       return;
@@ -1658,6 +2145,11 @@ export default function App() {
     setActiveGroupKey(groupKey);
     setGroupDetail([]);
     setGroupDetailLoading(true);
+    if (isPreviewMode) {
+      setGroupDetail(makePreviewData(user?.role ?? "teacher").groupDetail);
+      setGroupDetailLoading(false);
+      return;
+    }
     try {
       const detail = await request<AssignmentGroupStudent[]>(
         `/assignments/groups/detail?group_key=${encodeURIComponent(groupKey)}`,
@@ -1683,7 +2175,7 @@ export default function App() {
         <div className="auth-loader-wrap" role="status" aria-live="polite">
           <div className="auth-loader-logo">
             <span className="auth-loader-ring" />
-            <span className="auth-loader-inner">SC</span>
+            <BrandMark className="auth-loader-brand" />
           </div>
           <div className="auth-loader-copy">
             <h1>로그인 데이터 불러오기</h1>
@@ -1713,13 +2205,12 @@ export default function App() {
           <aside className="auth-brand-panel">
             <div>
               <div className="auth-logo-row">
-                <span className="auth-logo-mark">
-                  <img src={LOGO_URL} alt="" />
-                </span>
-                <strong>Starlab<span>Code</span></strong>
+                <BrandMark className="auth-logo-mark" />
               </div>
               <h1>
-                알고리즘 수업을 <span>한눈에</span>
+                알고리즘 수업을
+                <br />
+                <span>한 눈에</span>
               </h1>
               <p>
                 문제 풀이, 과제 배정, 실시간 채점 흐름을 하나의 학습 공간에서 관리합니다.
@@ -1779,6 +2270,18 @@ export default function App() {
                   로그인
                 </button>
               </form>
+
+              <div className="auth-preview-actions">
+                <p>백엔드 없이 디자인만 빠르게 확인하려면 미리보기로 들어가세요.</p>
+                <div>
+                  <button type="button" onClick={() => enterPreviewMode("teacher")}>
+                    선생님 UI 보기
+                  </button>
+                  <button type="button" onClick={() => enterPreviewMode("student")}>
+                    학생 UI 보기
+                  </button>
+                </div>
+              </div>
             </div>
           </main>
         </section>
@@ -1794,55 +2297,128 @@ export default function App() {
     { key: "manage", label: "문제 관리", show: user.role === "teacher" },
     { key: "accounts", label: "계정 관리", show: user.role === "teacher" },
   ];
+  const visibleNavItems = navItems.filter((item) => item.show);
+  const currentViewLabel = visibleNavItems.find((item) => item.key === view)?.label ?? "학습 화면";
+  const appClassName = isEditorWindow
+    ? "app-root app-root-editor"
+    : `app-root app-shell${sidebarCollapsed ? " app-layout-collapsed" : ""}`;
 
   return (
-    <div className={isEditorWindow ? "app-root app-root-editor" : "app-root"}>
+    <div className={appClassName}>
       {!isEditorWindow && (
-      <header className="topnav">
-        <div className="topnav-inner">
-          <button className="brand" onClick={() => navigate("home")}>
-            <span className="brand-mark">
-              <img src={LOGO_URL} alt="" />
-            </span>
-            <span className="brand-text">Starlab Code</span>
+        <header className="app-header">
+          <button className="brand header-brand" onClick={() => navigate("home")} aria-label="Starlab Code 홈으로 이동">
+            <BrandMark />
           </button>
-          <nav className="topnav-links">
-            {navItems
-              .filter((n) => n.show)
-              .map((item) => (
+          <div className="header-context" aria-label="현재 화면">
+            <span>현재 화면</span>
+            <strong>{currentViewLabel}</strong>
+          </div>
+          <div className="header-status">
+            <span className="header-clock">
+              <span>{clockParts.dateText}</span>
+              <strong>{clockParts.timeText}</strong>
+            </span>
+            <span className="header-study">
+              <span>공부 시간</span>
+              <strong>{studyDuration}</strong>
+            </span>
+            <span className={`health-chip health-${healthState}`}>
+              <span className="health-dot" />
+              {healthState === "checking" ? "서버 확인 중" : healthState === "ok" ? "서버 정상" : "서버 점검 필요"}
+            </span>
+          </div>
+          <div className="profile-menu-wrap">
+            <button
+              type="button"
+              className="profile-trigger"
+              onClick={() => setProfileMenuOpen((open) => !open)}
+              aria-haspopup="menu"
+              aria-expanded={profileMenuOpen}
+            >
+              <span className="profile-avatar">{userInitial(user.display_name)}</span>
+              <span className="profile-trigger-copy">
+                <strong>{user.display_name}</strong>
+                <span>
+                  {user.role === "teacher" ? (user.is_primary_teacher ? "메인 선생님" : "선생님") : user.class_name ?? "학생"}
+                </span>
+              </span>
+              <span className="profile-caret" aria-hidden="true">v</span>
+            </button>
+            {profileMenuOpen && (
+              <div className="profile-menu" role="menu">
+                <button type="button" role="menuitem" onClick={() => navigate("home")}>
+                  대시보드
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    navigate("home");
+                    setMessage("프로필 정보는 대시보드 상단에서 확인할 수 있습니다.");
+                  }}
+                >
+                  프로필
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setProfileMenuOpen(false);
+                    setError(null);
+                    setMessage("도움말은 수업 운영 중 필요한 기능 안내를 이곳에 연결할 수 있습니다.");
+                  }}
+                >
+                  도움말
+                </button>
+                <button type="button" role="menuitem" className="profile-menu-danger" onClick={logout}>
+                  로그아웃
+                </button>
+              </div>
+            )}
+          </div>
+        </header>
+      )}
+
+      {!isEditorWindow && (
+        <aside className="side-nav" aria-label="주요 메뉴">
+          <div className="side-nav-scroll">
+          <button
+            type="button"
+            className="nav-back side-nav-back"
+            onClick={goBackView}
+            disabled={viewHistory.length === 0}
+            title={viewHistory.length === 0 ? "이전 화면이 없습니다" : "이전 화면으로 이동"}
+          >
+            <span className="side-nav-marker">&lt;</span>
+            <span className="side-nav-text">이전</span>
+          </button>
+          <nav className="side-nav-links">
+            {visibleNavItems.map((item) => (
                 <button
                   key={item.key}
-                  className={view === item.key ? "nav-link nav-active" : "nav-link"}
+                  className={view === item.key ? "side-nav-link side-nav-link-active" : "side-nav-link"}
                   onClick={() => navigate(item.key)}
+                  title={sidebarCollapsed ? item.label : undefined}
                 >
+                  <span className="side-nav-marker">{item.label.slice(0, 1)}</span>
+                  <span className="side-nav-text">
                   {item.label}
+                  </span>
                 </button>
               ))}
           </nav>
-          <div className="topnav-user">
-            <div className="user-meta">
-              <span className={`role-pill role-${user.role}`}>
-                {user.role === "teacher" ? "강사" : "수강생"}
-              </span>
-              <strong>{user.display_name}</strong>
-              {user.class_name && <span className="muted">· {user.class_name} 수강반</span>}
-            </div>
-            <button className="btn btn-ghost btn-sm" onClick={logout}>
-              로그아웃
-            </button>
-            {typeof window !== "undefined" && window.starlabApp && (
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => {
-                  void requestDesktopExit();
-                }}
-              >
-                나가기
-              </button>
-            )}
           </div>
-        </div>
-      </header>
+          <button
+            type="button"
+            className="side-nav-toggle"
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            aria-label={sidebarCollapsed ? "메뉴 펼치기" : "메뉴 접기"}
+          >
+            <span className="side-toggle-mark">{sidebarCollapsed ? ">" : "<"}</span>
+            <span className="side-toggle-text">{sidebarCollapsed ? "펼치기" : "접기"}</span>
+          </button>
+        </aside>
       )}
 
       <main className={isEditorWindow ? "page page-editor-window" : "page"}>
@@ -1994,7 +2570,44 @@ export default function App() {
           />
         )}
       </main>
+      {!isEditorWindow && <AppFooter user={user} healthState={healthState} apiBaseUrl={API_BASE_URL} />}
     </div>
+  );
+}
+
+function AppFooter({
+  user,
+  healthState,
+  apiBaseUrl,
+}: {
+  user: UserProfile;
+  healthState: HealthState;
+  apiBaseUrl: string;
+}) {
+  const statusText =
+    healthState === "checking" ? "서버 확인 중" : healthState === "ok" ? "서버 정상" : "서버 점검 필요";
+
+  return (
+    <footer className="app-footer">
+      <div className="app-footer-inner">
+        <div className="footer-brand">
+          <BrandMark className="footer-brand-mark" />
+          <div>
+            <strong>Starlab Code</strong>
+            <span>수업용 알고리즘 학습 플랫폼</span>
+          </div>
+        </div>
+        <div className="footer-meta">
+          <span className={`health-chip footer-health health-${healthState}`}>
+            <span className="health-dot" />
+            {statusText}
+          </span>
+          <span>{APP_VERSION}</span>
+          <span>{user.role === "teacher" ? "교사용 운영 화면" : "학생 풀이 화면"}</span>
+          <span className="footer-api">{apiBaseUrl.replace(/^https?:\/\//, "")}</span>
+        </div>
+      </div>
+    </footer>
   );
 }
 
@@ -3364,6 +3977,13 @@ function SolveView(props: {
     onChangeLanguage,
   } = props;
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<number | null>(null);
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const [leftPanelPct, setLeftPanelPct] = useState(() => {
+    if (typeof window === "undefined") return 43;
+    const saved = Number(localStorage.getItem("starlab-solve-left-panel-pct"));
+    return Number.isFinite(saved) && saved >= 28 && saved <= 68 ? saved : 43;
+  });
+  const [isResizing, setIsResizing] = useState(false);
   const selectedSubmission =
     submissions.find((submission) => submission.id === selectedSubmissionId) ?? submissions[0] ?? null;
 
@@ -3383,10 +4003,44 @@ function SolveView(props: {
     }
     return <div className="empty card">문제를 선택해주세요. 좌측 메뉴 [문제]에서 풀고 싶은 문제를 고를 수 있어요.</div>;
   }
+
+  function beginResize(event: React.PointerEvent<HTMLButtonElement>) {
+    if (!shellRef.current) return;
+    event.preventDefault();
+    setIsResizing(true);
+    const shell = shellRef.current;
+    const rect = shell.getBoundingClientRect();
+    const pointerId = event.pointerId;
+    event.currentTarget.setPointerCapture(pointerId);
+
+    function update(clientX: number) {
+      const next = ((clientX - rect.left) / rect.width) * 100;
+      const clamped = Math.min(68, Math.max(28, next));
+      setLeftPanelPct(clamped);
+      localStorage.setItem("starlab-solve-left-panel-pct", clamped.toFixed(1));
+    }
+
+    function onPointerMove(moveEvent: PointerEvent) {
+      update(moveEvent.clientX);
+    }
+
+    function onPointerUp() {
+      setIsResizing(false);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    }
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp, { once: true });
+  }
+
   const currentAssignment = assignments[0] ?? null;
   return (
-    <div className={`sv-shell ${popupMode ? "sv-shell-editor" : ""}`}>
-      <section className="sv-left">
+    <div
+      className={`sv-shell ${popupMode ? "sv-shell-editor" : ""} ${isResizing ? "sv-resizing" : ""}`}
+      ref={shellRef}
+    >
+      <section className="sv-left" style={{ width: `${leftPanelPct}%` }}>
         <div className="sv-prob-hdr">
           <div className="sv-pnum">
             <span className="mono">#{problem.id}</span>
@@ -3512,6 +4166,16 @@ function SolveView(props: {
           </div>
         )}
       </section>
+
+      <button
+        type="button"
+        className="sv-resizer"
+        onPointerDown={beginResize}
+        aria-label="문제와 코드 에디터 영역 비율 조절"
+        title="좌우로 드래그해 문제/코드 영역 비율을 조절"
+      >
+        <span />
+      </button>
 
       <section className="sv-right">
         <div className="sv-ed-chrome">
