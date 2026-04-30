@@ -1215,6 +1215,7 @@ export default function App() {
 
   useEffect(() => {
     if (!token || !selectedProblemId) return;
+    setSelectedProblem((current) => (current && current.id === selectedProblemId ? current : null));
     const loadProblem = async () => {
       try {
         const detail = await request<ProblemDetail>(`/problems/${selectedProblemId}`, {}, token);
@@ -1913,6 +1914,7 @@ export default function App() {
           <SolveView
             user={user}
             problem={selectedProblem}
+            problemId={selectedProblemId}
             code={selectedCode}
             onChangeCode={(next) =>
               setCodeDrafts((current) => ({
@@ -3324,6 +3326,7 @@ function ProblemListView(props: {
 function SolveView(props: {
   user: UserProfile;
   problem: ProblemDetail | null;
+  problemId: number | null;
   code: string;
   onChangeCode: (s: string) => void;
   onRun: () => void;
@@ -3343,6 +3346,7 @@ function SolveView(props: {
   const {
     user,
     problem,
+    problemId,
     code,
     onChangeCode,
     onRun,
@@ -3374,6 +3378,9 @@ function SolveView(props: {
   }, [selectedSubmissionId, submissions]);
 
   if (!problem) {
+    if (problemId) {
+      return <div className="empty card">문제를 불러오는 중입니다…</div>;
+    }
     return <div className="empty card">문제를 선택해주세요. 좌측 메뉴 [문제]에서 풀고 싶은 문제를 고를 수 있어요.</div>;
   }
   const currentAssignment = assignments[0] ?? null;
