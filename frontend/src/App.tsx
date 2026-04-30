@@ -3742,7 +3742,7 @@ function LiveFeedView(props: {
         <table className="data-table">
           <thead>
             <tr>
-              <th>시각</th>
+              <th>제출</th>
               <th>수강생</th>
               <th>문제</th>
               <th>결과</th>
@@ -3757,7 +3757,7 @@ function LiveFeedView(props: {
                 className={`clickable ${item.id === highlightId ? "row-fresh" : ""}`}
                 onClick={() => onOpenProblem(item.problem_id)}
               >
-                <td className="muted">{timeAgo(item.created_at)}</td>
+                <td className="muted">{formatDate(toUTC(item.created_at))}</td>
                 <td>
                   <strong>{item.student_name}</strong>
                   {item.class_name && <span className="muted"> · {item.class_name}</span>}
