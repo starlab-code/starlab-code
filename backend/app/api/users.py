@@ -48,22 +48,22 @@ def update_student(
     student = session.get(User, student_id)
     # 학생 조회 및 권한 검증
     if not student or student.role != UserRole.student:
-        raise HTTPException(status_code=404, detail="학생이 아니거나, 해당 학생을 찾을 수 없습니다.")
+        raise HTTPException(status_code=404, detail="해당 학생을 찾을 수 없습니다.")
 
-    """
-    # 권한 검증: 일반 teacher는 본인이 생성한 학생만, main teacher는 같은 조직 내 모든 학생
-    primary_teacher_id = _get_primary_teacher_id(current_user)
-    if student.primary_teacher_id != primary_teacher_id:
-        raise HTTPException(status_code=403, detail="다른 조직의 학생은 수정할 수 없습니다.")
-    if not current_user.is_primary_teacher and student.created_by_teacher_id != current_user.id:
-        raise HTTPException(status_code=403, detail="본인이 생성한 학생만 수정할 수 있습니다.")
-    """
+
+    # is_primary_teacher가 true거나 created_by_teacher_id가 본인인 경우만 수정 가능
+    if payload.created_by_teacher_id is not None:
+        if not current_user.is_primary_teacher and student.created_by_teacher_id != current_user.id:
+            raise HTTPException(status_code=403, detail="담당 선생님 변경은 메인 선생님이거나, 해당 학생을 등록한 선생님만 가능합니다.")
+        student.created_by_teacher_id = payload.created_by_teacher_id
+
 
     # username 변경 시 중복 확인
     if payload.username is not None:
         normalized_username = payload.username.strip()
         if not normalized_username:
             raise HTTPException(status_code=400, detail="Username은 비어있을 수 없습니다.")
+        _ensure_unique_username(session, normalized_username, exclude_user_id=student_id)
         student.username = normalized_username
 
     # display_name 변경
@@ -86,23 +86,15 @@ def update_student(
             raise HTTPException(status_code=400, detail="Class name은 비어있을 수 없습니다.")
         student.class_name = normalized_class_name
 
-    """
-    # 담당 teacher 변경 (main teacher만 가능)
-    if payload.created_by_teacher_id is not None:
-        if not current_user.is_primary_teacher:
-            raise HTTPException(status_code=403, detail="담당 teacher 변경은 main teacher만 가능합니다.")
+    # primary_teacher_id 변경 시 해당 선생님의 id가 존재하는지 확인 
+    # primary_teacher_id에 해당하는 유저가 존재하는지, 그리고 해당 유저의 Role이 teacher인지 확인
+    if payload.primary_teacher_id is not None:
+        primary_teacher = session.get(User, payload.primary_teacher_id)
+        # primary_teacher가 None이거나, primary_teacher의 Role이 teacher가 아닌 경우 예외 발생
+        if not primary_teacher or primary_teacher.role != UserRole.teacher:
+            raise HTTPException(status_code=404, detail="해당 선생님을 찾을 수 없습니다.")
+        student.primary_teacher_id = payload.primary_teacher_id
 
-        new_teacher = session.get(User, payload.created_by_teacher_id)
-        if not new_teacher or new_teacher.role != UserRole.teacher:
-            raise HTTPException(status_code=404, detail="대상 teacher를 찾을 수 없습니다.")
-
-        # 같은 조직인지 확인
-        new_teacher_primary_id = _get_primary_teacher_id(new_teacher)
-        if new_teacher_primary_id != primary_teacher_id:
-            raise HTTPException(status_code=403, detail="다른 조직의 teacher에게 이동할 수 없습니다.")
-
-        student.created_by_teacher_id = payload.created_by_teacher_id
-    """
 
     session.add(student)
     session.commit()
@@ -118,22 +110,27 @@ def update_teacher(
     current_user: User = Depends(auth.require_teacher),
     session: Session = Depends(get_session),
 ):
+
+    # 메인 선생님(is_primary_teacher가 true인 선생님)만 수정 가능
+    if not current_user.is_primary_teacher and teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="선생님 정보 수정은 메인 선생님 혹은 본인만 가능합니다.")
+
     """teacher 계정 정보 수정"""
     teacher = session.get(User, teacher_id)
     if not teacher or teacher.role != UserRole.teacher:
-        raise HTTPException(status_code=404, detail="Teacher를 찾을 수 없습니다.")
+        raise HTTPException(status_code=404, detail="선생님을 찾을 수 없습니다.")
 
-    """
-    # 같은 조직인지 확인
+
+    # 같은 조직인지 확인(?)
     primary_teacher_id = _get_primary_teacher_id(current_user)
     teacher_primary_id = _get_primary_teacher_id(teacher)
     if teacher_primary_id != primary_teacher_id:
-        raise HTTPException(status_code=403, detail="다른 조직의 teacher는 수정할 수 없습니다.")
+        raise HTTPException(status_code=403, detail="다른 조직의 선생님은 수정할 수 없습니다.")
 
     # 권한 검증: main teacher만 수정 가능 (본인 포함)
     if not current_user.is_primary_teacher:
-        raise HTTPException(status_code=403, detail="Teacher 정보 수정은 main teacher만 가능합니다.")
-    """
+        raise HTTPException(status_code=403, detail="선생님 정보 수정은 메인 선생님만 가능합니다.")
+
     # username 변경 시 중복 확인
     if payload.username is not None:
         normalized_username = payload.username.strip()
