@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "npx tsc --noEmit -p tsconfig.app.json && npx tsc --noEmit -p tsconfig.node.json",
-    "build": "npm run typecheck && npx vite build",
+    "ensure-rollup-native": "node scripts/ensure-rollup-native.cjs",
+    "build": "npm run ensure-rollup-native && npm run typecheck && npx vite build",
     "preview": "vite preview"
   },
   "dependencies": {

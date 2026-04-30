@@ -677,8 +677,13 @@ function formatDate(value: string | null) {
   ).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
+// Server datetimes are UTC-naive (no Z suffix); append Z to force UTC interpretation.
+function toUTC(iso: string): string {
+  return iso.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(iso) ? iso : iso + "Z";
+}
+
 function timeAgo(iso: string) {
-  const t = new Date(iso).getTime();
+  const t = new Date(toUTC(iso)).getTime();
   if (Number.isNaN(t)) return "";
   const diff = Math.max(0, Date.now() - t);
   const sec = Math.floor(diff / 1000);
@@ -1350,7 +1355,7 @@ export default function App() {
       activity.push({ date: day, submitted: 0, accepted: 0 });
     }
     for (const s of submissions) {
-      const d = new Date(s.created_at);
+      const d = new Date(toUTC(s.created_at));
       d.setHours(0, 0, 0, 0);
       const idx = indexByKey.get(dayKey(d));
       if (idx === undefined) continue;
@@ -1407,7 +1412,7 @@ export default function App() {
       activity.push({ date: day, submitted: 0, accepted: 0 });
     }
     for (const s of submissions) {
-      const d = new Date(s.created_at);
+      const d = new Date(toUTC(s.created_at));
       d.setHours(0, 0, 0, 0);
       const idx = indexByKey.get(dayKey(d));
       if (idx === undefined) continue;
@@ -1419,7 +1424,7 @@ export default function App() {
     const todayKey = dayKey(today);
     const todayStudents = new Set<number>();
     for (const s of submissions) {
-      const d = new Date(s.created_at);
+      const d = new Date(toUTC(s.created_at));
       d.setHours(0, 0, 0, 0);
       if (dayKey(d) === todayKey) todayStudents.add(s.user_id);
     }
@@ -1430,7 +1435,7 @@ export default function App() {
     weekStart.setDate(weekStart.getDate() - 6);
     const studentWeek = new Map<number, { submitted: number; accepted: number; solved: Set<number> }>();
     for (const s of submissions) {
-      if (new Date(s.created_at).getTime() < weekStart.getTime()) continue;
+      if (new Date(toUTC(s.created_at)).getTime() < weekStart.getTime()) continue;
       let entry = studentWeek.get(s.user_id);
       if (!entry) {
         entry = { submitted: 0, accepted: 0, solved: new Set() };
@@ -1502,7 +1507,11 @@ export default function App() {
     setMessage(`${role === "teacher" ? "선생님" : "학생"} UI 미리보기입니다. 저장 없이 화면만 확인할 수 있어요.`);
   }
 
-  async function loadAppData(nextToken: string, knownUser?: UserProfile) {
+  async function loadAppData(
+    nextToken: string,
+    knownUser?: UserProfile,
+    options: { preserveSessionOnError?: boolean } = {},
+  ) {
     setIsLoading(true);
     setError(null);
     try {
@@ -1575,6 +1584,7 @@ export default function App() {
     } catch (caught) {
       const nextError = caught instanceof Error ? caught.message : "데이터를 불러오지 못했습니다.";
       setError(nextError);
+      if (options.preserveSessionOnError) return;
       localStorage.removeItem("starlab-code-token");
       setToken(null);
       setUser(null);
@@ -1706,6 +1716,16 @@ export default function App() {
     setProfileMenuOpen(false);
     setMessage(null);
     setError(null);
+  }
+
+  function refreshAppDataFromNavigation() {
+    if (!token || isPreviewMode) return;
+    void loadAppData(token, user ?? undefined, { preserveSessionOnError: true });
+  }
+
+  function handleSideNavClick(next: View) {
+    navigate(next);
+    refreshAppDataFromNavigation();
   }
 
   function goBackView() {
@@ -2394,7 +2414,7 @@ export default function App() {
                 <button
                   key={item.key}
                   className={view === item.key ? "side-nav-link side-nav-link-active" : "side-nav-link"}
-                  onClick={() => navigate(item.key)}
+                  onClick={() => handleSideNavClick(item.key)}
                   title={sidebarCollapsed ? item.label : undefined}
                 >
                   <span className="side-nav-marker">{item.label.slice(0, 1)}</span>
@@ -2418,10 +2438,8 @@ export default function App() {
       )}
 
       <main className={isEditorWindow ? "page page-editor-window" : "page"}>
-        {(message || error) && (
-          <div className={`toast ${error ? "toast-error" : "toast-ok"}`}>{error ?? message}</div>
-        )}
-        {isLoading && <div className="toast toast-info">데이터를 불러오는 중입니다...</div>}
+        {/* {error && <div className="toast toast-error">{error}</div>}
+        {isLoading && <div className="toast toast-info">데이터를 불러오는 중입니다...</div>} */}
 
         {view === "home" && user.role === "student" && (
           <StudentAcademyHome
@@ -3208,7 +3226,7 @@ function TeacherHome(props: {
         <div className="dash-welcome-text">
           <span className="eyebrow muted">
             <span className={`live-dot ${paused ? "live-dot-paused" : ""}`} />
-            {paused ? "실시간 일시정지" : "실시간 모니터링 중"}
+            {paused ? " 실시간 일시정지" : " 실시간 모니터링 중"}
           </span>
           <h1>
             {user.display_name}
@@ -3737,7 +3755,7 @@ function LiveFeedView(props: {
         <table className="data-table">
           <thead>
             <tr>
-              <th>시각</th>
+              <th>제출</th>
               <th>수강생</th>
               <th>문제</th>
               <th>결과</th>
@@ -3752,7 +3770,7 @@ function LiveFeedView(props: {
                 className={`clickable ${item.id === highlightId ? "row-fresh" : ""}`}
                 onClick={() => onOpenProblem(item.problem_id)}
               >
-                <td className="muted">{timeAgo(item.created_at)}</td>
+                <td className="muted">{formatDate(toUTC(item.created_at))}</td>
                 <td>
                   <strong>{item.student_name}</strong>
                   {item.class_name && <span className="muted"> · {item.class_name}</span>}
@@ -4129,7 +4147,7 @@ function SolveView(props: {
                         {s.passed_tests}/{s.total_tests}
                       </td>
                       <td className="mono muted">{s.runtime_ms}ms</td>
-                      <td className="muted">{formatDate(s.created_at)}</td>
+                      <td className="muted">{formatDate(toUTC(s.created_at))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -4797,7 +4815,7 @@ function AssignmentsView(props: {
                       {row.best_total > 0 ? `${row.best_passed}/${row.best_total}` : "-"}
                     </td>
                     <td className="mono">{row.attempts}</td>
-                    <td className="muted">{row.last_submitted_at ? formatDate(row.last_submitted_at) : "-"}</td>
+                    <td className="muted">{row.last_submitted_at ? formatDate(toUTC(row.last_submitted_at)) : "-"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -4817,6 +4835,7 @@ function SubmissionsView(props: {
   const { submissions, problems, onOpenProblem } = props;
   const map = new Map(problems.map((p) => [p.id, p]));
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<number | null>(submissions[0]?.id ?? null);
+  const [codeModalOpen, setCodeModalOpen] = useState(false);
   const selectedSubmission =
     submissions.find((submission) => submission.id === selectedSubmissionId) ?? submissions[0] ?? null;
 
@@ -4830,15 +4849,34 @@ function SubmissionsView(props: {
     }
   }, [selectedSubmissionId, submissions]);
 
+  useEffect(() => {
+    if (!codeModalOpen) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setCodeModalOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [codeModalOpen]);
+
+  const acceptedCount = submissions.filter((submission) => submission.status === "accepted").length;
+  const failedCount = submissions.length - acceptedCount;
+  const selectedLanguage: "python" | "c" = selectedSubmission?.language === "c" ? "c" : "python";
+  const selectedCodeLines = selectedSubmission?.code.split("\n") ?? [];
+
   return (
-    <div className="page-stack list-page">
-      <header className="page-head page-head-tight">
+    <div className="submissions-page page-stack">
+      <header className="page-head page-head-tight submissions-head">
         <div>
           <h1>내 제출</h1>
           <p className="muted">최근 제출한 코드의 결과를 확인할 수 있습니다.</p>
         </div>
+        <div className="submissions-stats" aria-label="제출 요약">
+          <span><b>{submissions.length}</b>전체</span>
+          <span><b>{acceptedCount}</b>통과</span>
+          <span><b>{failedCount}</b>미통과</span>
+        </div>
       </header>
-      <section className="card">
+      <section className="submissions-workspace">
         {submissions.length === 0 ? (
           <div className="empty">아직 제출 기록이 없습니다.</div>
         ) : (
@@ -4861,7 +4899,10 @@ function SubmissionsView(props: {
                   <tr
                     key={s.id}
                     className={selectedSubmission?.id === s.id ? "clickable submission-row-active" : "clickable"}
-                    onClick={() => setSelectedSubmissionId(s.id)}
+                    onClick={() => {
+                      setSelectedSubmissionId(s.id);
+                      setCodeModalOpen(true);
+                    }}
                   >
                     <td>
                       <strong>{p?.title ?? `#${s.problem_id}`}</strong>
@@ -4883,7 +4924,7 @@ function SubmissionsView(props: {
                       {s.passed_tests}/{s.total_tests}
                     </td>
                     <td className="mono muted">{s.runtime_ms}ms</td>
-                    <td className="muted">{formatDate(s.created_at)}</td>
+                    <td className="muted">{formatDate(toUTC(s.created_at))}</td>
                   </tr>
                 );
               })}
@@ -4891,9 +4932,10 @@ function SubmissionsView(props: {
           </table>
         )}
 
-        {selectedSubmission && (
-          <section className="submission-code-card">
-            <header className="submission-code-head">
+        {codeModalOpen && selectedSubmission && createPortal(
+          <div className="submission-modal-backdrop" onClick={() => setCodeModalOpen(false)}>
+          <article className="submission-code-mockup submission-code-modal" onClick={(event) => event.stopPropagation()}>
+            <header className="submission-code-mockup-head">
               <div>
                 <strong>{map.get(selectedSubmission.problem_id)?.title ?? `문제 #${selectedSubmission.problem_id}`}</strong>
                 <p className="muted">{formatDate(selectedSubmission.created_at)}</p>
@@ -4903,10 +4945,44 @@ function SubmissionsView(props: {
                 <span className="mono muted">
                   {selectedSubmission.passed_tests}/{selectedSubmission.total_tests}
                 </span>
+                <button
+                  type="button"
+                  className="submission-modal-close"
+                  onClick={() => setCodeModalOpen(false)}
+                  aria-label="제출 코드 닫기"
+                >
+                  x
+                </button>
               </div>
             </header>
-            <pre className="codeblock submission-codeblock">{selectedSubmission.code}</pre>
-          </section>
+            <div className="submission-code-toolbar">
+              <div className="submission-window-dots" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
+              <span className="submission-code-file mono">
+                main.{selectedLanguage === "c" ? "c" : "py"}
+              </span>
+              <div className="submission-code-state">
+                <StatusBadge status={selectedSubmission.status} />
+                <span className="mono">{selectedSubmission.passed_tests}/{selectedSubmission.total_tests}</span>
+                <span className="mono">{selectedSubmission.runtime_ms}ms</span>
+              </div>
+            </div>
+            <div className="submission-code-frame">
+              <pre className="submission-line-nums" aria-hidden="true">
+                {selectedCodeLines.map((_, index) => (
+                  <Fragment key={index}>{index + 1}{index < selectedCodeLines.length - 1 ? "\n" : ""}</Fragment>
+                ))}
+              </pre>
+              <pre className="submission-code-preview">
+                {renderHighlightedCode(selectedSubmission.code, selectedLanguage)}
+              </pre>
+            </div>
+          </article>
+          </div>,
+          document.body,
         )}
       </section>
     </div>
@@ -5315,6 +5391,8 @@ function GradingPanel({ stream, isRunning }: { stream: StreamState; isRunning: b
   const slots = Array.from({ length: totalTests }, (_, index) => index);
   const finalTone = stream.done ? statusTone(stream.summary?.status ?? "") : "running";
   const badgeTone = finalTone === "ok" ? "ok" : finalTone === "warn" ? "warn" : "bad";
+  const firstErrorResult = stream.results.find((result) => result.stderr.trim());
+  const errorMessage = firstErrorResult?.stderr.trim() ?? "";
 
   return (
     <div className="sv-grade">
@@ -5352,11 +5430,18 @@ function GradingPanel({ stream, isRunning }: { stream: StreamState; isRunning: b
         </div>
       )}
 
+      {errorMessage && (
+        <div className="sv-error-panel">
+          <strong>에러 메시지</strong>
+          <pre>{errorMessage}</pre>
+        </div>
+      )}
+
       <ul className="sv-tc-list">
         {slots.map((i) => {
           const r = stream.results.find((rr) => rr.index === i);
           const tone = r ? statusTone(r.status) : i === stream.completed && isRunning ? "running" : "pending";
-          const hasDetail = r && (r.expected || r.actual || r.stderr);
+          const hasDetail = r && (r.expected || r.actual);
           return (
             <Fragment key={i}>
               <li
@@ -5382,7 +5467,6 @@ function GradingPanel({ stream, isRunning }: { stream: StreamState; isRunning: b
                   <div className="result-meta mono">
                     {r.actual && <span>출력<br />{r.actual}</span>}
                     {r.expected && <span>예상 출력값<br />{r.expected}</span>}
-                    {r.stderr && <span className="bad">에러: {r.stderr}</span>}
                   </div>
                 </li>
               )}
