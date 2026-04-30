@@ -2921,53 +2921,40 @@ function StudentAcademyHome(props: {
   const categoryRows = metrics?.categoryRows ?? [];
   const myRank = leaderboard.find((entry) => entry.student_id === user.id) ?? null;
   const topLeaderboard = leaderboard.slice(0, 8);
-  const piePalette = [
-    "#ef1b2d",
-    "#f59e0b",
-    "#10b981",
-    "#3b82f6",
-    "#8b5cf6",
-    "#ec4899",
-    "#06b6d4",
-    "#84cc16",
-    "#f97316",
-    "#a855f7",
-  ];
-  const pieRows = categoryRows.filter((row) => row.solved > 0);
-  const pieTotal = pieRows.reduce((sum, row) => sum + row.solved, 0);
-  const pieSlices = (() => {
-    if (pieTotal === 0) return [] as { color: string; path: string; pct: number; row: { name: string; solved: number; total: number } }[];
-    if (pieRows.length === 1) {
-      return [
-        {
-          color: piePalette[0],
-          path: "M50,10 A40,40 0 1 1 49.99,10 Z",
-          pct: 100,
-          row: pieRows[0],
-        },
-      ];
-    }
-    const slices: { color: string; path: string; pct: number; row: { name: string; solved: number; total: number } }[] = [];
-    let cumulative = 0;
-    pieRows.forEach((row, index) => {
-      const value = row.solved / pieTotal;
-      const startAngle = cumulative * 2 * Math.PI;
-      const endAngle = (cumulative + value) * 2 * Math.PI;
-      cumulative += value;
-      const x1 = 50 + 40 * Math.sin(startAngle);
-      const y1 = 50 - 40 * Math.cos(startAngle);
-      const x2 = 50 + 40 * Math.sin(endAngle);
-      const y2 = 50 - 40 * Math.cos(endAngle);
-      const large = endAngle - startAngle > Math.PI ? 1 : 0;
-      slices.push({
-        color: piePalette[index % piePalette.length],
-        path: `M50,50 L${x1.toFixed(3)},${y1.toFixed(3)} A40,40 0 ${large} 1 ${x2.toFixed(3)},${y2.toFixed(3)} Z`,
-        pct: Math.round(value * 100),
-        row,
-      });
-    });
-    return slices;
-  })();
+  const radarRows = categoryRows.slice(0, 8).map((row) => ({
+    ...row,
+    pct: row.total === 0 ? 0 : Math.round((row.solved / row.total) * 100),
+  }));
+  const radarSize = 240;
+  const radarCenter = radarSize / 2;
+  const radarRadius = 78;
+  const radarPoint = (index: number, radius: number) => {
+    const angle = -Math.PI / 2 + (index / Math.max(radarRows.length, 1)) * Math.PI * 2;
+    return {
+      x: radarCenter + Math.cos(angle) * radius,
+      y: radarCenter + Math.sin(angle) * radius,
+    };
+  };
+  const radarPolygon = radarRows
+    .map((row, index) => {
+      const point = radarPoint(index, radarRadius * (row.pct / 100));
+      return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+    })
+    .join(" ");
+  const radarAxisPoints = radarRows.map((row, index) => {
+    const end = radarPoint(index, radarRadius);
+    const label = radarPoint(index, radarRadius + 28);
+    return { row, end, label };
+  });
+  const radarGridRings = [25, 50, 75, 100].map((level) =>
+    radarRows.map((_, index) => {
+      const point = radarPoint(index, radarRadius * (level / 100));
+      return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+    }).join(" "),
+  );
+  const radarTotalSolved = radarRows.reduce((sum, row) => sum + row.solved, 0);
+  const pieTotal = radarTotalSolved;
+  const pieSlices = radarRows.map((row) => ({ color: "#ef1b2d", path: "", pct: row.pct, row }));
   const avatarLabel = user.display_name.trim().charAt(0) || "S";
   const dueSoonCount = pendingAssignments.filter((assignment) => {
     if (!assignment.due_at) return false;
@@ -3229,13 +3216,58 @@ function StudentAcademyHome(props: {
       <section className="sh-panel">
         <header className="sh-panel-head">
           <h2>알고리즘별 풀이 완료 현황</h2>
-          <span className="sh-panel-meta">총 {pieTotal}문제 해결 · 알고리즘별 비중</span>
+          <span className="sh-panel-meta">알고리즘별 풀이 퍼센티지</span>
         </header>
-        {pieSlices.length === 0 ? (
+        {radarRows.length === 0 ? (
           <p className="sh-empty">아직 분류별 풀이 기록이 없어요.</p>
         ) : (
-          <div className="sh-pie-wrap">
-            <div className="sh-pie-chart">
+          <div className="sh-radar-wrap">
+            <div className="sh-radar-chart">
+              <svg viewBox={`0 0 ${radarSize} ${radarSize}`} className="sh-radar-svg" role="img" aria-label="알고리즘별 풀이 퍼센트 분포">
+                {radarGridRings.map((points, index) => (
+                  <polygon key={index} points={points} className="sh-radar-ring" />
+                ))}
+                {radarAxisPoints.map((axis) => (
+                  <line key={axis.row.name} x1={radarCenter} y1={radarCenter} x2={axis.end.x} y2={axis.end.y} className="sh-radar-axis" />
+                ))}
+                <polygon points={radarPolygon} className="sh-radar-fill" />
+                <polygon points={radarPolygon} className="sh-radar-stroke" />
+                {radarAxisPoints.map((axis) => (
+                  <g key={`${axis.row.name}-label`}>
+                    <circle
+                      cx={radarCenter + (axis.end.x - radarCenter) * (axis.row.pct / 100)}
+                      cy={radarCenter + (axis.end.y - radarCenter) * (axis.row.pct / 100)}
+                      r="3.2"
+                      className="sh-radar-dot"
+                    />
+                    <text
+                      x={axis.label.x}
+                      y={axis.label.y}
+                      textAnchor={axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle"}
+                      dominantBaseline="middle"
+                      className="sh-radar-label"
+                    >
+                      {axis.row.name}
+                    </text>
+                    <text
+                      x={axis.label.x}
+                      y={axis.label.y + 12}
+                      textAnchor={axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle"}
+                      dominantBaseline="middle"
+                      className="sh-radar-label-pct"
+                    >
+                      {axis.row.pct}%
+                    </text>
+                  </g>
+                ))}
+                <circle cx={radarCenter} cy={radarCenter} r="20" className="sh-radar-center" />
+                <text x={radarCenter} y={radarCenter - 2} textAnchor="middle" className="sh-radar-center-num">
+                  {radarTotalSolved}
+                </text>
+                <text x={radarCenter} y={radarCenter + 10} textAnchor="middle" className="sh-radar-center-label">
+                  solved
+                </text>
+              </svg>
               <svg viewBox="0 0 100 100" className="sh-pie-svg" role="img" aria-label="알고리즘별 풀이 분포">
                 {pieSlices.map((slice, index) => (
                   <path key={index} d={slice.path} fill={slice.color}>
@@ -3251,6 +3283,20 @@ function StudentAcademyHome(props: {
                 </text>
               </svg>
             </div>
+            <ul className="sh-radar-list" style={{ marginLeft: "50px" }}>
+              {radarRows.map((row) => (
+                <li key={row.name}>
+                  <span className="sh-radar-list-name">{row.name}</span>
+                  <span className="sh-radar-list-count mono">
+                    {row.solved}<span className="muted">/{row.total}</span>
+                  </span>
+                  <span className="sh-radar-list-pct mono">{row.pct}%</span>
+                  <span className="sh-radar-list-bar">
+                    <span style={{ width: `${row.pct}%` }} />
+                  </span>
+                </li>
+              ))}
+            </ul>
             <ul className="sh-pie-legend">
               {pieSlices.map((slice, index) => (
                 <li key={index}>
@@ -3757,8 +3803,8 @@ function TeacherHomeRedesign(props: {
         </section>
       </div>
 
-      <div className="th-grid-sub">
-        <section className="card">
+      {/* 
+        {/* <section className="card">
           <div className="panel-head">
             <h2>30일 활동 히트맵</h2>
             <span className="muted">활동일 {metrics?.activeDays ?? 0}일</span>
@@ -3781,7 +3827,7 @@ function TeacherHomeRedesign(props: {
               많음
             </div>
           </div>
-        </section>
+        </section> */}
 
         <section className="card">
           <div className="panel-head">
@@ -3826,7 +3872,7 @@ function TeacherHomeRedesign(props: {
           )}
         </section>
       </div>
-    </div>
+    
   );
 }
 
