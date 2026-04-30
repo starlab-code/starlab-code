@@ -39,7 +39,9 @@ def _normalize_output(text: str) -> str:
 
 
 def _python_executable() -> str:
-    return shutil.which("python") or sys.executable
+    if sys.platform == "win32":
+        return sys.executable
+    return shutil.which("python3") or shutil.which("python") or sys.executable
 
 
 def _subprocess_env() -> dict:
@@ -115,6 +117,48 @@ def _build_python_cmd(script_path: Path) -> List[str]:
     # -I (isolated) implies -E, -s (and -P on 3.11+); -B skips .pyc. Safe on older versions too.
     cmd.extend(["-I", "-B", str(script_path)])
     return cmd
+
+
+def _gcc_executable() -> str:
+    return shutil.which("gcc") or shutil.which("cc") or "gcc"
+
+
+def _c_compile_env() -> dict:
+    if sys.platform == "win32":
+        env = {}
+        for key in ("SYSTEMROOT", "PATH", "TEMP", "TMP"):
+            v = os.environ.get(key)
+            if v is not None:
+                env[key] = v
+        return env
+    return {"PATH": "/usr/local/bin:/usr/bin:/bin"}
+
+
+def _compile_c(source_path: Path, binary_path: Path) -> Tuple[bool, str]:
+    """Compile C source with gcc. Returns (success, error_output)."""
+    cmd = [
+        _gcc_executable(),
+        str(source_path),
+        "-o", str(binary_path),
+        "-O2", "-std=c11", "-lm",
+        "-Wall", "-Wextra", "-Wshadow",
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=30,
+            env=_c_compile_env(),
+        )
+        if result.returncode != 0:
+            return False, result.stderr.decode("utf-8", errors="replace")
+        return True, ""
+    except subprocess.TimeoutExpired:
+        return False, "컴파일 시간 초과 (30초)."
+    except FileNotFoundError:
+        return False, "gcc를 찾을 수 없습니다. 서버에서 C 언어를 지원하지 않습니다."
+    except OSError as exc:
+        return False, f"컴파일 실패: {exc}"
 
 
 def _run_single(
@@ -236,7 +280,9 @@ def run_code_iter(
     timeout_per_test: float = 2.0,
 ) -> Iterator[TestResult]:
     test_list = list(tests)
-    if language.lower() != "python":
+    lang = language.lower()
+
+    if lang not in ("python", "c"):
         for index in range(len(test_list)):
             yield TestResult(
                 index=index,
@@ -258,11 +304,90 @@ def run_code_iter(
             )
         return
 
+    if lang == "c":
+        yield from _run_code_c_iter(code, test_list, timeout_per_test)
+        return
+
     wrapped_code = textwrap.dedent(code).rstrip() + "\n"
     with tempfile.TemporaryDirectory(prefix="starlab-code-") as temp_dir:
         solution_path = Path(temp_dir) / "solution.py"
         solution_path.write_text(wrapped_code, encoding="utf-8")
         cmd = _build_python_cmd(solution_path)
+
+        for index, test in enumerate(test_list):
+            expected = test.get("expected", "") or ""
+            stdin_text = test.get("input", "") or ""
+
+            if len(stdin_text.encode("utf-8")) > settings.judge_max_input_bytes:
+                yield TestResult(
+                    index=index,
+                    status="runtime_error",
+                    expected=expected,
+                    stderr="Test input exceeds the configured maximum size.",
+                )
+                continue
+
+            with _judge_semaphore:
+                try:
+                    returncode, stdout, stderr, runtime_ms, _ = _run_single(
+                        cmd, stdin_text, timeout_per_test
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    timeout_ms = int(timeout_per_test * 1000)
+                    out_text = (exc.output or b"").decode("utf-8", errors="replace") if isinstance(exc.output, (bytes, bytearray)) else (exc.output or "")
+                    err_text = (exc.stderr or b"").decode("utf-8", errors="replace") if isinstance(exc.stderr, (bytes, bytearray)) else (exc.stderr or "")
+                    yield TestResult(
+                        index=index,
+                        status="time_limit",
+                        stdout=out_text,
+                        stderr=(err_text + "\nTime limit exceeded").strip(),
+                        expected=expected,
+                        actual=out_text,
+                        runtime_ms=timeout_ms,
+                    )
+                    continue
+
+            if returncode != 0:
+                status = "runtime_error"
+            elif _normalize_output(stdout) == _normalize_output(expected):
+                status = "passed"
+            else:
+                status = "wrong_answer"
+
+            yield TestResult(
+                index=index,
+                status=status,
+                stdout=stdout,
+                stderr=stderr,
+                expected=expected,
+                actual=stdout,
+                runtime_ms=runtime_ms,
+            )
+
+
+def _run_code_c_iter(
+    code: str,
+    test_list: list,
+    timeout_per_test: float,
+) -> Iterator[TestResult]:
+    with tempfile.TemporaryDirectory(prefix="starlab-code-c-") as temp_dir:
+        source_path = Path(temp_dir) / "solution.c"
+        binary_path = Path(temp_dir) / ("solution.exe" if sys.platform == "win32" else "solution")
+        source_path.write_text(code, encoding="utf-8")
+
+        with _judge_semaphore:
+            success, compile_error = _compile_c(source_path, binary_path)
+
+        if not success:
+            for index in range(len(test_list)):
+                yield TestResult(
+                    index=index,
+                    status="compile_error",
+                    stderr=compile_error,
+                )
+            return
+
+        cmd = [str(binary_path)]
 
         for index, test in enumerate(test_list):
             expected = test.get("expected", "") or ""

@@ -229,6 +229,15 @@ class AssignmentCreate(SQLModel):
     classroom_label: Optional[str] = None
 
 
+class AssignmentUpdate(SQLModel):
+    """단일 과제 수정용 스키마"""
+    title: Optional[str] = None
+    problem_id: Optional[int] = None
+    assignment_type: Optional[AssignmentType] = None
+    due_at: Optional[datetime] = None
+    classroom_label: Optional[str] = None
+
+
 class AssignmentGroup(SQLModel):
     group_key: str
     title: str

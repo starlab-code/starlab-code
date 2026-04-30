@@ -106,10 +106,9 @@ From the repository root, make sure `.env` contains:
 STARLAB_API_BASE_URL=https://your-backend.example.com
 ```
 
-Then build:
+Install dependencies from the repository root, then build:
 
 ```powershell
-cd desktop
 npm install
 npm run dist
 ```
@@ -117,7 +116,7 @@ npm run dist
 The installer is created here:
 
 ```text
-desktop/dist/Starlab Code Setup 0.1.0.exe
+desktop/dist/Starlab Code Setup <version>.exe
 ```
 
 ### Test Checklist
