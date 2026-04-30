@@ -160,6 +160,20 @@ type DashboardSummary = {
   categories: Category[];
 };
 
+type LeaderboardEntry = {
+  rank: number;
+  student_id: number;
+  student_name: string;
+  class_name: string | null;
+  score: number;
+  solved: number;
+  attempts: number;
+  accuracy: number;
+  beginner_solved: number;
+  basic_solved: number;
+  intermediate_solved: number;
+};
+
 type ProblemEditorForm = {
   title: string;
   short_description: string;
@@ -1243,6 +1257,7 @@ export default function App() {
   const [students, setStudents] = useState<UserProfile[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [stream, setStream] = useState<StreamState | null>(null);
   const [codeDrafts, setCodeDrafts] = useState<Record<string, string>>({});
   const [view, setView] = useState<View>(isEditorWindow ? "solve" : "home");
@@ -1491,6 +1506,7 @@ export default function App() {
     setSubmissions(preview.submissions);
     setFeed(preview.feed);
     setDashboard(preview.dashboard);
+    setLeaderboard([]);
     setSelectedProblemId(firstProblem.id);
     setSelectedProblem(firstProblem);
     setCodeDrafts(
@@ -1529,6 +1545,8 @@ export default function App() {
         calls.push(request<SubmissionFeedItem[]>("/submissions/feed?limit=60", {}, nextToken));
         calls.push(request<AssignmentGroup[]>("/assignments/groups", {}, nextToken));
       }
+      const leaderboardCallIndex = calls.length;
+      calls.push(request<LeaderboardEntry[]>("/leaderboard", {}, nextToken));
 
       const results = await Promise.all(calls);
       const [
@@ -1552,6 +1570,7 @@ export default function App() {
         SubmissionFeedItem[] | undefined,
         AssignmentGroup[] | undefined,
       ];
+      const leaderboardResult = results[leaderboardCallIndex] as LeaderboardEntry[] | undefined;
 
       setToken(nextToken);
       setUser(profile);
@@ -1563,6 +1582,7 @@ export default function App() {
       setTeachers(teachersResult ?? []);
       setStudents(studentsResult ?? []);
       setAssignmentGroups(groupsResult ?? []);
+      setLeaderboard(leaderboardResult ?? []);
       if (isEditorWindow) {
         setView("solve");
       }
@@ -2450,6 +2470,7 @@ export default function App() {
             assignments={myAssignments}
             submissions={submissions}
             problems={problems}
+            leaderboard={leaderboard}
             onOpenProblem={openProblem}
             onGoProblems={() => navigate("problems")}
             onGoAssignments={() => navigate("assignments")}
@@ -2871,11 +2892,12 @@ function StudentAcademyHome(props: {
   assignments: Assignment[];
   submissions: Submission[];
   problems: ProblemCard[];
+  leaderboard: LeaderboardEntry[];
   onOpenProblem: (id: number) => void;
   onGoProblems: () => void;
   onGoAssignments: () => void;
 }) {
-  const { user, stats, metrics, dashboard, assignments, submissions, problems, onOpenProblem, onGoProblems, onGoAssignments } = props;
+  const { user, stats, metrics, dashboard, assignments, submissions, problems, leaderboard, onOpenProblem, onGoProblems, onGoAssignments } = props;
   const pendingAssignments = assignments.filter((a) => !a.submitted);
   const pending = pendingAssignments.slice(0, 5);
   const recommended = problems
@@ -2896,16 +2918,43 @@ function StudentAcademyHome(props: {
         accepted: 0,
       }));
   const maxAccepted = Math.max(1, ...activity.map((day) => day.accepted));
-  const difficultyRows = (["beginner", "basic", "intermediate"] as const).map((level) => {
-    const stat = metrics?.difficultyTotals[level] ?? { solved: 0, total: 0 };
-    return {
-      level,
-      solved: stat.solved,
-      total: stat.total,
-      pct: stat.total === 0 ? 0 : Math.round((stat.solved / stat.total) * 100),
-    };
-  });
   const categoryRows = metrics?.categoryRows ?? [];
+  const myRank = leaderboard.find((entry) => entry.student_id === user.id) ?? null;
+  const topLeaderboard = leaderboard.slice(0, 8);
+  const radarRows = categoryRows.slice(0, 8).map((row) => ({
+    ...row,
+    pct: row.total === 0 ? 0 : Math.round((row.solved / row.total) * 100),
+  }));
+  const radarSize = 240;
+  const radarCenter = radarSize / 2;
+  const radarRadius = 78;
+  const radarPoint = (index: number, radius: number) => {
+    const angle = -Math.PI / 2 + (index / Math.max(radarRows.length, 1)) * Math.PI * 2;
+    return {
+      x: radarCenter + Math.cos(angle) * radius,
+      y: radarCenter + Math.sin(angle) * radius,
+    };
+  };
+  const radarPolygon = radarRows
+    .map((row, index) => {
+      const point = radarPoint(index, radarRadius * (row.pct / 100));
+      return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+    })
+    .join(" ");
+  const radarAxisPoints = radarRows.map((row, index) => {
+    const end = radarPoint(index, radarRadius);
+    const label = radarPoint(index, radarRadius + 28);
+    return { row, end, label };
+  });
+  const radarGridRings = [25, 50, 75, 100].map((level) =>
+    radarRows.map((_, index) => {
+      const point = radarPoint(index, radarRadius * (level / 100));
+      return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+    }).join(" "),
+  );
+  const radarTotalSolved = radarRows.reduce((sum, row) => sum + row.solved, 0);
+  const pieTotal = radarTotalSolved;
+  const pieSlices = radarRows.map((row) => ({ color: "#ef1b2d", path: "", pct: row.pct, row }));
   const avatarLabel = user.display_name.trim().charAt(0) || "S";
   const dueSoonCount = pendingAssignments.filter((assignment) => {
     if (!assignment.due_at) return false;
@@ -3107,58 +3156,161 @@ function StudentAcademyHome(props: {
 
           <section className="sh-panel">
             <header className="sh-panel-head">
-              <h2>난이도 현황</h2>
-              <span className="sh-panel-meta">누적 풀이 기준</span>
+              <h2>문제 풀이 순위</h2>
+              <span className="sh-panel-meta">입문 1점 · 기초 3점 · 응용 5점</span>
             </header>
-            <ul className="sh-mastery">
-              {difficultyRows.map((row) => (
-                <li key={row.level}>
-                  <div className="sh-mastery-head">
-                    <DifficultyBadge level={row.level} />
-                    <span className="sh-mastery-nums mono">
-                      {row.solved}
-                      <span className="muted">/{row.total}</span>
+            {leaderboard.length === 0 ? (
+              <p className="sh-empty">아직 집계할 풀이 기록이 없어요.</p>
+            ) : (
+              <>
+                <div className="sh-rank-table-wrap">
+                  <table className="sh-rank-table">
+                    <thead>
+                      <tr>
+                        <th className="sh-rank-col-rank">순위</th>
+                        <th>학생</th>
+                        <th className="sh-rank-col-num">점수</th>
+                        <th className="sh-rank-col-num">정답률</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topLeaderboard.map((entry) => {
+                        const isMe = entry.student_id === user.id;
+                        return (
+                          <tr key={entry.student_id} className={isMe ? "sh-rank-row sh-rank-row-me" : "sh-rank-row"}>
+                            <td className="sh-rank-col-rank">
+                              <span className={`sh-rank-badge sh-rank-badge-${entry.rank <= 3 ? entry.rank : "normal"}`}>
+                                {entry.rank}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="sh-rank-name">
+                                <strong>{entry.student_name}</strong>
+                                {isMe && <span className="sh-rank-me-tag">나</span>}
+                              </div>
+                              {entry.class_name && <span className="sh-rank-sub">{entry.class_name}</span>}
+                            </td>
+                            <td className="sh-rank-col-num mono">{entry.score}</td>
+                            <td className="sh-rank-col-num mono">{entry.accuracy}%</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {myRank && myRank.rank > topLeaderboard.length && (
+                  <div className="sh-rank-self">
+                    <span className="sh-rank-self-label">내 순위</span>
+                    <span className="sh-rank-self-rank">{myRank.rank}위</span>
+                    <span className="sh-rank-self-score mono">
+                      {myRank.score}점 · 정답률 {myRank.accuracy}%
                     </span>
-                    <span className="sh-mastery-nums">{row.pct}%</span>
                   </div>
-                  <div className="sh-mastery-bar">
-                    <div className={`sh-mastery-fill fill-${row.level}`} style={{ width: `${row.pct}%` }} />
-                  </div>
-                </li>
-              ))}
-            </ul>
+                )}
+              </>
+            )}
           </section>
         </div>
       </div>
 
       <section className="sh-panel">
         <header className="sh-panel-head">
-          <h2>카테고리별 풀이</h2>
-          <span className="sh-panel-meta">어떤 유형을 자주 풀고 있는지 확인해 보세요.</span>
+          <h2>알고리즘별 풀이 완료 현황</h2>
+          <span className="sh-panel-meta">알고리즘별 풀이 퍼센티지</span>
         </header>
-        {categoryRows.length === 0 ? (
+        {radarRows.length === 0 ? (
           <p className="sh-empty">아직 분류별 풀이 기록이 없어요.</p>
         ) : (
-          <ul className="sh-mastery sh-mastery-grid">
-            {categoryRows.map((row) => {
-              const pct = row.total === 0 ? 0 : Math.round((row.solved / row.total) * 100);
-              return (
+          <div className="sh-radar-wrap">
+            <div className="sh-radar-chart">
+              <svg viewBox={`0 0 ${radarSize} ${radarSize}`} className="sh-radar-svg" role="img" aria-label="알고리즘별 풀이 퍼센트 분포">
+                {radarGridRings.map((points, index) => (
+                  <polygon key={index} points={points} className="sh-radar-ring" />
+                ))}
+                {radarAxisPoints.map((axis) => (
+                  <line key={axis.row.name} x1={radarCenter} y1={radarCenter} x2={axis.end.x} y2={axis.end.y} className="sh-radar-axis" />
+                ))}
+                <polygon points={radarPolygon} className="sh-radar-fill" />
+                <polygon points={radarPolygon} className="sh-radar-stroke" />
+                {radarAxisPoints.map((axis) => (
+                  <g key={`${axis.row.name}-label`}>
+                    <circle
+                      cx={radarCenter + (axis.end.x - radarCenter) * (axis.row.pct / 100)}
+                      cy={radarCenter + (axis.end.y - radarCenter) * (axis.row.pct / 100)}
+                      r="3.2"
+                      className="sh-radar-dot"
+                    />
+                    <text
+                      x={axis.label.x}
+                      y={axis.label.y}
+                      textAnchor={axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle"}
+                      dominantBaseline="middle"
+                      className="sh-radar-label"
+                    >
+                      {axis.row.name}
+                    </text>
+                    <text
+                      x={axis.label.x}
+                      y={axis.label.y + 12}
+                      textAnchor={axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle"}
+                      dominantBaseline="middle"
+                      className="sh-radar-label-pct"
+                    >
+                      {axis.row.pct}%
+                    </text>
+                  </g>
+                ))}
+                <circle cx={radarCenter} cy={radarCenter} r="20" className="sh-radar-center" />
+                <text x={radarCenter} y={radarCenter - 2} textAnchor="middle" className="sh-radar-center-num">
+                  {radarTotalSolved}
+                </text>
+                <text x={radarCenter} y={radarCenter + 10} textAnchor="middle" className="sh-radar-center-label">
+                  solved
+                </text>
+              </svg>
+              <svg viewBox="0 0 100 100" className="sh-pie-svg" role="img" aria-label="알고리즘별 풀이 분포">
+                {pieSlices.map((slice, index) => (
+                  <path key={index} d={slice.path} fill={slice.color}>
+                    <title>{`${slice.row.name} · ${slice.row.solved}문제 (${slice.pct}%)`}</title>
+                  </path>
+                ))}
+                <circle cx="50" cy="50" r="22" fill="var(--surface)" />
+                <text x="50" y="48" textAnchor="middle" className="sh-pie-center-num">
+                  {pieTotal}
+                </text>
+                <text x="50" y="60" textAnchor="middle" className="sh-pie-center-label">
+                  해결
+                </text>
+              </svg>
+            </div>
+            <ul className="sh-radar-list" style={{ marginLeft: "50px" }}>
+              {radarRows.map((row) => (
                 <li key={row.name}>
-                  <div className="sh-mastery-head">
-                    <span className="sh-mastery-cat">{row.name}</span>
-                    <span className="sh-mastery-nums mono">
-                      {row.solved}
-                      <span className="muted">/{row.total}</span>
-                    </span>
-                    <span className="sh-mastery-nums">{pct}%</span>
-                  </div>
-                  <div className="sh-mastery-bar">
-                    <div className="sh-mastery-fill fill-cat" style={{ width: `${pct}%` }} />
-                  </div>
+                  <span className="sh-radar-list-name">{row.name}</span>
+                  <span className="sh-radar-list-count mono">
+                    {row.solved}<span className="muted">/{row.total}</span>
+                  </span>
+                  <span className="sh-radar-list-pct mono">{row.pct}%</span>
+                  <span className="sh-radar-list-bar">
+                    <span style={{ width: `${row.pct}%` }} />
+                  </span>
                 </li>
-              );
-            })}
-          </ul>
+              ))}
+            </ul>
+            <ul className="sh-pie-legend">
+              {pieSlices.map((slice, index) => (
+                <li key={index}>
+                  <span className="sh-pie-dot" style={{ background: slice.color }} />
+                  <span className="sh-pie-name">{slice.row.name}</span>
+                  <span className="sh-pie-count mono">
+                    {slice.row.solved}
+                    <span className="muted">/{slice.row.total}</span>
+                  </span>
+                  <span className="sh-pie-pct mono">{slice.pct}%</span>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </section>
     </div>
@@ -3651,8 +3803,8 @@ function TeacherHomeRedesign(props: {
         </section>
       </div>
 
-      <div className="th-grid-sub">
-        <section className="card">
+      {/* 
+        {/* <section className="card">
           <div className="panel-head">
             <h2>30일 활동 히트맵</h2>
             <span className="muted">활동일 {metrics?.activeDays ?? 0}일</span>
@@ -3675,7 +3827,7 @@ function TeacherHomeRedesign(props: {
               많음
             </div>
           </div>
-        </section>
+        </section> */}
 
         <section className="card">
           <div className="panel-head">
@@ -3720,7 +3872,7 @@ function TeacherHomeRedesign(props: {
           )}
         </section>
       </div>
-    </div>
+    
   );
 }
 

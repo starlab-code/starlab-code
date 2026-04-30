@@ -315,6 +315,20 @@ class DashboardSummary(SQLModel):
     categories: List[Category]
 
 
+class LeaderboardEntry(SQLModel):
+    rank: int
+    student_id: int
+    student_name: str
+    class_name: Optional[str] = None
+    score: int
+    solved: int
+    attempts: int
+    accuracy: float
+    beginner_solved: int
+    basic_solved: int
+    intermediate_solved: int
+
+
 class SubmissionFeedItem(SQLModel):
     id: int
     student_id: int

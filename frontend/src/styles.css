@@ -3792,6 +3792,313 @@ h3 { font-size: 0.95rem; font-weight: 700; }
 .fill-intermediate { background: linear-gradient(90deg, var(--progress-fill-soft), var(--tier-intermediate)); }
 .fill-cat { background: linear-gradient(90deg, var(--progress-fill-soft), var(--accent)); }
 
+/* ===== Student dashboard: leaderboard ===== */
+.sh-rank-table-wrap {
+  padding: 0.25rem 0.4rem 0.6rem;
+  overflow-x: auto;
+}
+.sh-rank-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.sh-rank-table thead th {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid #edf1f7;
+  white-space: nowrap;
+}
+.sh-rank-table tbody td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid #f1f4f8;
+  vertical-align: middle;
+}
+.sh-rank-table tbody tr:last-child td { border-bottom: 0; }
+.sh-rank-row-me {
+  background: var(--accent-soft);
+}
+.sh-rank-col-rank { width: 48px; text-align: center; }
+.sh-rank-col-num {
+  text-align: right;
+  width: 70px;
+  white-space: nowrap;
+}
+.sh-rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+.sh-rank-badge-1 { background: #fef3c7; color: #b45309; }
+.sh-rank-badge-2 { background: #e5e7eb; color: #374151; }
+.sh-rank-badge-3 { background: #ffe4d4; color: #9a3412; }
+.sh-rank-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.sh-rank-name strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+.sh-rank-me-tag {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.sh-rank-sub {
+  display: block;
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 0.1rem;
+}
+.sh-rank-self {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0.1rem 1rem 0.95rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  border: 1px solid #ffd0d6;
+}
+.sh-rank-self-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+.sh-rank-self-rank {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--accent-strong);
+}
+.sh-rank-self-score {
+  font-size: 12px;
+  color: var(--text-soft);
+  margin-left: auto;
+}
+
+/* ===== Student dashboard: algorithm radar chart ===== */
+.sh-pie-wrap {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  gap: 1.2rem;
+  align-items: center;
+  padding: 1rem 1.15rem 1.2rem;
+}
+.sh-pie-chart {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sh-pie-svg {
+  width: 100%;
+  max-width: 220px;
+  height: auto;
+  display: block;
+}
+.sh-pie-svg path {
+  transition: opacity 0.15s ease;
+  cursor: default;
+}
+.sh-pie-svg:hover path { opacity: 0.55; }
+.sh-pie-svg path:hover { opacity: 1; }
+.sh-pie-center-num {
+  font-size: 12px;
+  font-weight: 800;
+  fill: var(--text);
+}
+.sh-pie-center-label {
+  font-size: 5px;
+  fill: var(--muted);
+  letter-spacing: 0.05em;
+}
+.sh-pie-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+  align-content: start;
+}
+.sh-pie-legend li {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 12.5px;
+  padding: 0.25rem 0;
+  border-bottom: 1px dashed #eef0f3;
+}
+.sh-pie-legend li:last-child { border-bottom: 0; }
+.sh-pie-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.sh-pie-name {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sh-pie-count {
+  font-size: 11.5px;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+.sh-pie-pct {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 700;
+  white-space: nowrap;
+  min-width: 40px;
+  text-align: right;
+}
+.sh-radar-wrap {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  gap: 1.4rem;
+  align-items: center;
+  padding: 1rem 1.15rem 1.2rem;
+}
+.sh-radar-chart {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+.sh-radar-svg {
+  width: min(100%, 360px);
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+.sh-radar-ring {
+  fill: none;
+  stroke: #d9dee7;
+  stroke-width: 1;
+  stroke-dasharray: 4 5;
+}
+.sh-radar-axis {
+  stroke: #cbd2dd;
+  stroke-width: 1;
+}
+.sh-radar-fill {
+  fill: rgba(239, 27, 45, 0.18);
+}
+.sh-radar-stroke {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+}
+.sh-radar-dot {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.sh-radar-label {
+  font-size: 8px;
+  font-weight: 800;
+  fill: var(--text);
+}
+.sh-radar-label-pct {
+  font-size: 7px;
+  font-weight: 800;
+  fill: var(--accent);
+}
+.sh-radar-center {
+  fill: var(--surface);
+  stroke: var(--line);
+}
+.sh-radar-center-num {
+  font-size: 13px;
+  font-weight: 900;
+  fill: var(--text);
+}
+.sh-radar-center-label {
+  font-size: 6px;
+  fill: var(--muted);
+  letter-spacing: 0.05em;
+}
+.sh-radar-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+.sh-radar-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.35rem 0;
+  border-bottom: 1px dashed #eef0f3;
+}
+.sh-radar-list li:last-child { border-bottom: 0; }
+.sh-radar-list-name {
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sh-radar-list-count {
+  font-size: 11.5px;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+.sh-radar-list-pct {
+  min-width: 44px;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--accent-strong);
+  text-align: right;
+}
+.sh-radar-list-bar {
+  grid-column: 1 / -1;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--progress-track);
+}
+.sh-radar-list-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--progress-fill-soft), var(--accent));
+}
+.sh-radar-chart .sh-pie-svg,
+.sh-radar-wrap .sh-pie-legend {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .sh-pie-wrap,
+  .sh-radar-wrap {
+    grid-template-columns: 1fr;
+  }
+  .sh-pie-svg { max-width: 200px; margin: 0 auto; }
+  .sh-radar-svg { width: min(100%, 300px); }
+}
+
 /* ========== Manage redesign ========== */
 .mv-root {
   display: grid;

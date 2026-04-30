@@ -17,6 +17,8 @@ from .models import (
     ClassroomSummary,
     CodeExecutionResponse,
     DashboardSummary,
+    DifficultyLevel,
+    LeaderboardEntry,
     Problem,
     ProblemCard,
     ProblemCreate,
@@ -331,6 +333,110 @@ def dashboard(current_user: User = Depends(auth.get_current_user), session: Sess
         total_problems=total_problems,
         categories=categories,
     )
+
+
+@app.get("/leaderboard", response_model=List[LeaderboardEntry])
+def leaderboard(
+    current_user: User = Depends(auth.get_current_user),
+    session: Session = Depends(get_session),
+):
+    primary_teacher_id = get_primary_teacher_id(current_user)
+    students = session.exec(
+        select(User).where(
+            User.role == UserRole.student,
+            User.primary_teacher_id == primary_teacher_id,
+        )
+    ).all()
+    if not students:
+        return []
+
+    student_ids = [student.id for student in students]
+    submissions = session.exec(
+        select(Submission).where(Submission.user_id.in_(student_ids))
+    ).all()
+    problems = {problem.id: problem for problem in session.exec(select(Problem)).all()}
+
+    score_per_difficulty = {
+        DifficultyLevel.beginner: 1,
+        DifficultyLevel.basic: 3,
+        DifficultyLevel.intermediate: 5,
+    }
+
+    buckets: Dict[int, Dict[str, object]] = {}
+    for student in students:
+        buckets[student.id] = {
+            "attempts": 0,
+            "accepted": 0,
+            "solved_problems": set(),
+            "solved_by_diff": {
+                DifficultyLevel.beginner: set(),
+                DifficultyLevel.basic: set(),
+                DifficultyLevel.intermediate: set(),
+            },
+        }
+
+    for sub in submissions:
+        bucket = buckets.get(sub.user_id)
+        if not bucket:
+            continue
+        bucket["attempts"] += 1
+        if sub.status != SubmissionStatus.accepted:
+            continue
+        bucket["accepted"] += 1
+        if sub.problem_id in bucket["solved_problems"]:
+            continue
+        bucket["solved_problems"].add(sub.problem_id)
+        problem = problems.get(sub.problem_id)
+        if not problem:
+            continue
+        diff_set = bucket["solved_by_diff"].get(problem.difficulty)
+        if diff_set is not None:
+            diff_set.add(sub.problem_id)
+
+    rows = []
+    for student in students:
+        bucket = buckets[student.id]
+        beginner = len(bucket["solved_by_diff"][DifficultyLevel.beginner])
+        basic = len(bucket["solved_by_diff"][DifficultyLevel.basic])
+        intermediate = len(bucket["solved_by_diff"][DifficultyLevel.intermediate])
+        score = (
+            beginner * score_per_difficulty[DifficultyLevel.beginner]
+            + basic * score_per_difficulty[DifficultyLevel.basic]
+            + intermediate * score_per_difficulty[DifficultyLevel.intermediate]
+        )
+        attempts = bucket["attempts"]
+        accuracy = 0.0 if attempts == 0 else round(bucket["accepted"] / attempts * 100, 1)
+        rows.append(
+            {
+                "student_id": student.id,
+                "student_name": student.display_name,
+                "class_name": student.class_name,
+                "score": score,
+                "solved": len(bucket["solved_problems"]),
+                "attempts": attempts,
+                "accuracy": accuracy,
+                "beginner_solved": beginner,
+                "basic_solved": basic,
+                "intermediate_solved": intermediate,
+            }
+        )
+
+    rows.sort(key=lambda row: (-row["score"], -row["accuracy"], row["student_name"]))
+
+    entries: List[LeaderboardEntry] = []
+    last_rank = 0
+    last_key: Optional[tuple] = None
+    for index, row in enumerate(rows):
+        key = (row["score"], row["accuracy"])
+        if key == last_key:
+            rank = last_rank
+        else:
+            rank = index + 1
+            last_rank = rank
+            last_key = key
+        entries.append(LeaderboardEntry(rank=rank, **row))
+
+    return entries
 
 
 @app.get("/categories", response_model=List[Category])
