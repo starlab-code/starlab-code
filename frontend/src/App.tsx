@@ -999,7 +999,10 @@ function BrandMark({ className = "" }: { className?: string }) {
       </span>
     </span>
   );
+}
+
 let _monoCharWidth: number | null = null;
+
 function monoCharWidth(): number {
   if (_monoCharWidth !== null) return _monoCharWidth;
   const canvas = document.createElement("canvas");
@@ -1216,6 +1219,7 @@ export default function App() {
   const [token, setToken] = useState<string | null>(() =>
     typeof window === "undefined" ? null : localStorage.getItem("starlab-code-token"),
   );
+  const isPreviewMode = token === PREVIEW_TOKEN;
   const [authBootstrapping, setAuthBootstrapping] = useState<boolean>(() =>
     typeof window === "undefined" ? false : Boolean(localStorage.getItem("starlab-code-token")),
   );
@@ -2310,10 +2314,6 @@ export default function App() {
           <button className="brand header-brand" onClick={() => navigate("home")} aria-label="Starlab Code 홈으로 이동">
             <BrandMark />
           </button>
-          <div className="header-context" aria-label="현재 화면">
-            <span>현재 화면</span>
-            <strong>{currentViewLabel}</strong>
-          </div>
           <div className="header-status">
             <span className="header-clock">
               <span>{clockParts.dateText}</span>
@@ -2322,10 +2322,6 @@ export default function App() {
             <span className="header-study">
               <span>공부 시간</span>
               <strong>{studyDuration}</strong>
-            </span>
-            <span className={`health-chip health-${healthState}`}>
-              <span className="health-dot" />
-              {healthState === "checking" ? "서버 확인 중" : healthState === "ok" ? "서버 정상" : "서버 점검 필요"}
             </span>
           </div>
           <div className="profile-menu-wrap">
@@ -2347,7 +2343,7 @@ export default function App() {
             </button>
             {profileMenuOpen && (
               <div className="profile-menu" role="menu">
-                <button type="button" role="menuitem" onClick={() => navigate("home")}>
+                {/* <button type="button" role="menuitem" onClick={() => navigate("home")}>
                   대시보드
                 </button>
                 <button
@@ -2370,7 +2366,7 @@ export default function App() {
                   }}
                 >
                   도움말
-                </button>
+                </button> */}
                 <button type="button" role="menuitem" className="profile-menu-danger" onClick={logout}>
                   로그아웃
                 </button>
@@ -2598,13 +2594,7 @@ function AppFooter({
           </div>
         </div>
         <div className="footer-meta">
-          <span className={`health-chip footer-health health-${healthState}`}>
-            <span className="health-dot" />
-            {statusText}
-          </span>
           <span>{APP_VERSION}</span>
-          <span>{user.role === "teacher" ? "교사용 운영 화면" : "학생 풀이 화면"}</span>
-          <span className="footer-api">{apiBaseUrl.replace(/^https?:\/\//, "")}</span>
         </div>
       </div>
     </footer>
