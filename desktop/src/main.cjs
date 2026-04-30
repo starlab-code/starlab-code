@@ -659,7 +659,11 @@ function createWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    // Only hand http(s) URLs to the OS browser. Internal schemes like starlab://
+    // would otherwise trigger Windows' "find an app in the Microsoft Store" dialog.
+    if (/^https?:\/\//i.test(url)) {
+      shell.openExternal(url);
+    }
     return { action: "deny" };
   });
 

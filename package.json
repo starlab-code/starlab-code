@@ -1,0 +1,14 @@
+{
+  "name": "starlab-code",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "desktop"
+  ],
+  "scripts": {
+    "dev:frontend": "npm run dev --workspace starlab-code-frontend",
+    "build:frontend": "npm run build --workspace starlab-code-frontend",
+    "desktop": "npm run start --workspace starlab-code-desktop",
+    "dist": "npm run dist --workspace starlab-code-desktop"
+  }
+}
