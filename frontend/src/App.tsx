@@ -200,6 +200,20 @@ type AssignmentDraft = {
   classroom_label: string;
 };
 
+type ConfirmDialogConfig = {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  cancelLabel?: string;
+  tone?: "danger" | "default";
+  onConfirm: () => void | Promise<void>;
+};
+
+type StudentMoveDraft = {
+  teacher_id: number;
+  class_name: string;
+};
+
 type AssignmentGroup = {
   group_key: string;
   title: string;
@@ -711,11 +725,13 @@ function timeAgo(iso: string) {
 
 function formatHeaderClock(date: Date) {
   const dateText = date.toLocaleDateString("ko-KR", {
+    timeZone: "Asia/Seoul",
     month: "long",
     day: "numeric",
     weekday: "short",
   });
   const timeText = date.toLocaleTimeString("ko-KR", {
+    timeZone: "Asia/Seoul",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
@@ -1282,6 +1298,7 @@ export default function App() {
   const [assignmentDraft, setAssignmentDraft] = useState<AssignmentDraft>(emptyAssignmentDraft());
   const [editorLanguage, setEditorLanguage] = useState<"python" | "c">("python");
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1293,9 +1310,12 @@ export default function App() {
     typeof window === "undefined" ? false : localStorage.getItem("starlab-sidebar-collapsed") === "1",
   );
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogConfig | null>(null);
   const [clockNow, setClockNow] = useState(() => new Date());
   const lastFeedIdRef = useRef<number>(0);
   const studyStartedAtRef = useRef<number>(Date.now());
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const serverClockOffsetRef = useRef<number>(0);
 
   const C_STARTER = "#include <stdio.h>\n\nint main()\n{\n    printf(\"Hello World!\\n\");\n    return 0;\n}";
   const selectedCode = selectedProblemId
@@ -1625,7 +1645,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const intervalId = window.setInterval(() => setClockNow(new Date()), 30_000);
+    const tick = () => setClockNow(new Date(Date.now() + serverClockOffsetRef.current));
+    tick();
+    const intervalId = window.setInterval(tick, 30_000);
     return () => window.clearInterval(intervalId);
   }, []);
 
@@ -1634,12 +1656,42 @@ export default function App() {
   }, [sidebarCollapsed]);
 
   useEffect(() => {
+    if (!profileMenuOpen) return;
+
+    function closeOnOutsideClick(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (profileMenuRef.current?.contains(target)) return;
+      setProfileMenuOpen(false);
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setProfileMenuOpen(false);
+    }
+
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [profileMenuOpen]);
+
+  useEffect(() => {
     if (isEditorWindow || isPreviewMode) return;
     let alive = true;
 
     async function checkHealth() {
       try {
         const response = await fetch(`${API_BASE_URL}/health`);
+        const serverDate = response.headers.get("date");
+        if (serverDate) {
+          const serverTime = Date.parse(serverDate);
+          if (Number.isFinite(serverTime)) {
+            serverClockOffsetRef.current = serverTime - Date.now();
+            if (alive) setClockNow(new Date(serverTime));
+          }
+        }
         if (alive) setHealthState(response.ok ? "ok" : "down");
       } catch {
         if (alive) setHealthState("down");
@@ -1785,32 +1837,63 @@ export default function App() {
     navigate("solve");
   }
 
-  function loadSelectedProblemIntoForm() {
-    if (!selectedProblem) return;
+  function fillProblemFormFromDetail(problem: ProblemDetail) {
     setProblemFormMode("edit");
-    navigate("manage");
     setProblemForm({
-      title: selectedProblem.title,
-      short_description: selectedProblem.short_description,
-      statement: selectedProblem.statement,
-      input_description: selectedProblem.input_description,
-      output_description: selectedProblem.output_description,
-      constraints: selectedProblem.constraints,
-      category_id: selectedProblem.category_id,
-      difficulty: selectedProblem.difficulty,
-      starter_code_python: selectedProblem.starter_code_python,
-      sample_input: selectedProblem.sample_input,
-      sample_output: selectedProblem.sample_output,
-      time_limit_seconds: selectedProblem.time_limit_seconds,
-      memory_limit_mb: selectedProblem.memory_limit_mb,
+      title: problem.title,
+      short_description: problem.short_description,
+      statement: problem.statement,
+      input_description: problem.input_description,
+      output_description: problem.output_description,
+      constraints: problem.constraints,
+      category_id: problem.category_id,
+      difficulty: problem.difficulty,
+      starter_code_python: problem.starter_code_python,
+      sample_input: problem.sample_input,
+      sample_output: problem.sample_output,
+      time_limit_seconds: problem.time_limit_seconds,
+      memory_limit_mb: problem.memory_limit_mb,
       testcases:
-        selectedProblem.all_testcases?.map((tc) => ({
+        problem.all_testcases?.map((tc) => ({
           input_data: tc.input_data,
           expected_output: tc.expected_output,
           is_public: tc.is_public,
           note: tc.note,
         })) ?? [emptyTestcase()],
     });
+  }
+
+  function loadSelectedProblemIntoForm() {
+    if (!selectedProblem) return;
+    fillProblemFormFromDetail(selectedProblem);
+    navigate("manage");
+  }
+
+  async function openProblemForManage(problemId: number) {
+    setSelectedProblemId(problemId);
+    setStream(null);
+    setError(null);
+    if (isPreviewMode) {
+      const detail = previewProblems.find((problem) => problem.id === problemId) ?? null;
+      if (detail) {
+        setSelectedProblem(detail);
+        fillProblemFormFromDetail(detail);
+      }
+      navigate("manage");
+      return;
+    }
+    if (!token) return;
+    try {
+      const detail =
+        selectedProblem?.id === problemId
+          ? selectedProblem
+          : await request<ProblemDetail>(`/problems/${problemId}`, {}, token);
+      setSelectedProblem(detail);
+      fillProblemFormFromDetail(detail);
+      navigate("manage");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "문제 관리 화면을 열지 못했습니다.");
+    }
   }
 
   function resetProblemForm() {
@@ -1821,8 +1904,10 @@ export default function App() {
 
   async function handleLogin(event: FormEvent) {
     event.preventDefault();
+    if (isLoggingIn) return;
     setError(null);
     setMessage(null);
+    setIsLoggingIn(true);
     try {
       const body = new URLSearchParams();
       body.set("username", loginDraft.username);
@@ -1837,6 +1922,8 @@ export default function App() {
       setMessage(`${auth.user.display_name} 님 환영합니다.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "로그인에 실패했습니다.");
+    } finally {
+      setIsLoggingIn(false);
     }
   }
 
@@ -1900,18 +1987,23 @@ export default function App() {
     }
     const teacher = teachers.find((item) => item.id === teacherId);
     if (!teacher || teacher.is_primary_teacher) return;
-    if (!window.confirm(`${teacher.display_name} 선생님 계정을 삭제할까요? 담당 학생은 마스터 선생님에게 이관됩니다.`)) {
-      return;
-    }
-    setError(null);
-    setMessage(null);
-    try {
-      await request<{ ok: boolean }>(`/users/teachers/${teacherId}`, { method: "DELETE" }, token);
-      setMessage(`${teacher.display_name} 선생님 계정을 삭제했습니다.`);
-      await loadAppData(token, user);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "선생님 계정 삭제에 실패했습니다.");
-    }
+    setConfirmDialog({
+      title: "선생님 계정 삭제",
+      body: `${teacher.display_name} 선생님 계정을 삭제할까요? 담당 학생은 메인 선생님에게 이관됩니다.`,
+      confirmLabel: "삭제",
+      tone: "danger",
+      onConfirm: async () => {
+        setError(null);
+        setMessage(null);
+        try {
+          await request<{ ok: boolean }>(`/users/teachers/${teacherId}`, { method: "DELETE" }, token);
+          setMessage(`${teacher.display_name} 선생님 계정을 삭제했습니다.`);
+          await loadAppData(token, user);
+        } catch (caught) {
+          setError(caught instanceof Error ? caught.message : "선생님 계정 삭제에 실패했습니다.");
+        }
+      },
+    });
   }
 
   async function handleDeleteStudent(studentId: number) {
@@ -1922,18 +2014,48 @@ export default function App() {
     }
     const student = students.find((item) => item.id === studentId);
     if (!student) return;
-    if (!window.confirm(`${student.display_name} 학생 계정과 관련 과제/제출 기록을 삭제할까요?`)) {
-      return;
-    }
+    setConfirmDialog({
+      title: "학생 계정 삭제",
+      body: `${student.display_name} 학생 계정과 관련 과제/제출 기록을 삭제할까요?`,
+      confirmLabel: "삭제",
+      tone: "danger",
+      onConfirm: async () => {
+        setError(null);
+        setMessage(null);
+        try {
+          await request<{ ok: boolean }>(`/users/students/${studentId}`, { method: "DELETE" }, token);
+          setMessage(`${student.display_name} 학생 계정을 삭제했습니다.`);
+          await loadAppData(token, user);
+        } catch (caught) {
+          setError(caught instanceof Error ? caught.message : "학생 계정 삭제에 실패했습니다.");
+        }
+      },
+    });
+  }
+
+  async function handleMoveStudent(studentId: number, teacherId: number, className: string) {
+    const student = students.find((item) => item.id === studentId);
+    const teacher = teachers.find((item) => item.id === teacherId) ?? (user?.id === teacherId ? user : null);
     setError(null);
-    setMessage(null);
-    try {
-      await request<{ ok: boolean }>(`/users/students/${studentId}`, { method: "DELETE" }, token);
-      setMessage(`${student.display_name} 학생 계정을 삭제했습니다.`);
-      await loadAppData(token, user);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "학생 계정 삭제에 실패했습니다.");
-    }
+    setMessage(
+      `${student?.display_name ?? "선택한 학생"} 반 이동 입력을 확인했습니다. ` +
+        `담당 선생님: ${teacher?.display_name ?? "선택한 선생님"}, 반: ${className}`,
+    );
+  }
+
+  function handleDeleteProblems(problemIds: number[]) {
+    const picked = problems.filter((problem) => problemIds.includes(problem.id));
+    const count = picked.length || problemIds.length;
+    const names = picked.slice(0, 3).map((problem) => problem.title).join(", ");
+    setConfirmDialog({
+      title: "문제 삭제",
+      body: `${names ? `${names}${count > 3 ? " 외" : ""} ` : ""}${count}개 문제를 삭제할까요?`,
+      confirmLabel: "삭제",
+      tone: "danger",
+      onConfirm: () => {
+        setMessage(`${count}개 문제 삭제 UI를 확인했습니다.`);
+      },
+    });
   }
 
   async function handleRegister(event: FormEvent) {
@@ -2252,18 +2374,18 @@ export default function App() {
                 <BrandMark className="auth-logo-mark" />
               </div>
               <h1>
-                알고리즘 수업을
+                스타랩
                 <br />
-                <span>한 눈에</span>
+                <span>Expert</span>
               </h1>
               <p>
-                문제 풀이, 과제 배정, 실시간 채점 흐름을 하나의 학습 공간에서 관리합니다.
+                문제 풀이, 과제, 제출 관리용 교육 플랫폼입니다.
               </p>
             </div>
             <div className="auth-feature-list" aria-hidden="true">
-              <div><span>01</span> 실시간 채점 진행 확인</div>
-              <div><span>02</span> 학생별 과제와 제출 기록 관리</div>
-              <div><span>03</span> 서버가 선생님/학생 계정 자동 판별</div>
+              <div><span>01</span> 실시간 채점 기능</div>
+              <div><span>02</span> 학생별 과제, 제출 기록 관리</div>
+              <div><span>03</span> 학생별 학습 흐름 확인</div>
             </div>
           </aside>
 
@@ -2273,7 +2395,7 @@ export default function App() {
             <div className="auth-glass-card">
               <div>
                 <h2>로그인</h2>
-                <p>계정 유형은 로그인 후 서버에서 자동으로 확인합니다.</p>
+                <p>아이디와 비밀번호로 수업 화면에 접속하세요.</p>
               </div>
 
               {(message || error) && (
@@ -2310,12 +2432,12 @@ export default function App() {
                   </div>
                 </label>
 
-                <button className="auth-dark-submit" type="submit">
-                  로그인
+                <button className="auth-dark-submit" type="submit" disabled={isLoggingIn}>
+                  {isLoggingIn ? "로그인 중..." : "로그인"}
                 </button>
               </form>
 
-              <div className="auth-preview-actions">
+              {/*<div className="auth-preview-actions">
                 <p>백엔드 없이 디자인만 빠르게 확인하려면 미리보기로 들어가세요.</p>
                 <div>
                   <button type="button" onClick={() => enterPreviewMode("teacher")}>
@@ -2325,7 +2447,7 @@ export default function App() {
                     학생 UI 보기
                   </button>
                 </div>
-              </div>
+              </div> */}
             </div>
           </main>
         </section>
@@ -2364,7 +2486,7 @@ export default function App() {
               <strong>{studyDuration}</strong>
             </span>
           </div>
-          <div className="profile-menu-wrap">
+          <div className="profile-menu-wrap" ref={profileMenuRef}>
             <button
               type="button"
               className="profile-trigger"
@@ -2383,6 +2505,16 @@ export default function App() {
             </button>
             {profileMenuOpen && (
               <div className="profile-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setProfileMenuOpen(false);
+                    navigate("home");
+                  }}
+                >
+                  대시보드
+                </button>
                 {/* <button type="button" role="menuitem" onClick={() => navigate("home")}>
                   대시보드
                 </button>
@@ -2419,18 +2551,18 @@ export default function App() {
       {!isEditorWindow && (
         <aside className="side-nav" aria-label="주요 메뉴">
           <div className="side-nav-scroll">
-          <button
-            type="button"
-            className="nav-back side-nav-back"
-            onClick={goBackView}
-            disabled={viewHistory.length === 0}
-            title={viewHistory.length === 0 ? "이전 화면이 없습니다" : "이전 화면으로 이동"}
-          >
-            <span className="side-nav-marker">&lt;</span>
-            <span className="side-nav-text">이전</span>
-          </button>
-          <nav className="side-nav-links">
-            {visibleNavItems.map((item) => (
+            <button
+              type="button"
+              className="nav-back side-nav-back"
+              onClick={goBackView}
+              disabled={viewHistory.length === 0}
+              title={viewHistory.length === 0 ? "이전 화면이 없습니다" : "이전 화면으로 이동"}
+            >
+              <span className="side-nav-marker">&lt;</span>
+              <span className="side-nav-text">이전</span>
+            </button>
+            <nav className="side-nav-links">
+              {visibleNavItems.map((item) => (
                 <button
                   key={item.key}
                   className={view === item.key ? "side-nav-link side-nav-link-active" : "side-nav-link"}
@@ -2439,11 +2571,11 @@ export default function App() {
                 >
                   <span className="side-nav-marker">{item.label.slice(0, 1)}</span>
                   <span className="side-nav-text">
-                  {item.label}
+                    {item.label}
                   </span>
                 </button>
               ))}
-          </nav>
+            </nav>
           </div>
           <button
             type="button"
@@ -2516,6 +2648,8 @@ export default function App() {
             onCategory={setCategoryFilter}
             onDifficulty={setDifficultyFilter}
             onOpen={openProblem}
+            onEditProblem={openProblemForManage}
+            onDeleteProblems={handleDeleteProblems}
             submissions={submissions}
             userRole={user.role}
           />
@@ -2583,6 +2717,7 @@ export default function App() {
             onCreateStudent={handleCreateStudent}
             onDeleteTeacher={handleDeleteTeacher}
             onDeleteStudent={handleDeleteStudent}
+            onMoveStudent={handleMoveStudent}
           />
         )}
 
@@ -2602,10 +2737,13 @@ export default function App() {
             mode={problemFormMode}
             onSubmit={saveProblem}
             onReset={resetProblemForm}
+            problemId={selectedProblemId}
+            onDeleteProblem={(problemId) => handleDeleteProblems([problemId])}
           />
         )}
       </main>
       {!isEditorWindow && <AppFooter user={user} healthState={healthState} apiBaseUrl={API_BASE_URL} />}
+      {confirmDialog && <ConfirmDialogModal dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />}
     </div>
   );
 }
@@ -2920,7 +3058,7 @@ function StudentAcademyHome(props: {
   const maxAccepted = Math.max(1, ...activity.map((day) => day.accepted));
   const categoryRows = metrics?.categoryRows ?? [];
   const myRank = leaderboard.find((entry) => entry.student_id === user.id) ?? null;
-  const topLeaderboard = leaderboard.slice(0, 8);
+  const topLeaderboard = leaderboard.slice(0, 12);
   const radarRows = categoryRows.slice(0, 8).map((row) => ({
     ...row,
     pct: row.total === 0 ? 0 : Math.round((row.solved / row.total) * 100),
@@ -3283,7 +3421,7 @@ function StudentAcademyHome(props: {
                 </text>
               </svg>
             </div>
-            <ul className="sh-radar-list" style={{ marginLeft: "50px" }}>
+            <ul className="sh-radar-list">
               {radarRows.map((row) => (
                 <li key={row.name}>
                   <span className="sh-radar-list-name">{row.name}</span>
@@ -3958,23 +4096,56 @@ function ProblemListView(props: {
   onCategory: (c: number | "all") => void;
   onDifficulty: (d: Difficulty | "all") => void;
   onOpen: (id: number) => void;
+  onEditProblem: (id: number) => void;
+  onDeleteProblems: (ids: number[]) => void;
   submissions: Submission[];
   userRole: UserRole;
 }) {
-  const { problems, categories, categoryFilter, difficultyFilter, problemFilter, onSearch, onCategory, onDifficulty, onOpen, submissions } = props;
+  const {
+    problems,
+    categories,
+    categoryFilter,
+    difficultyFilter,
+    problemFilter,
+    onSearch,
+    onCategory,
+    onDifficulty,
+    onOpen,
+    onEditProblem,
+    onDeleteProblems,
+    submissions,
+    userRole,
+  } = props;
   const solvedSet = new Set(submissions.filter((s) => s.status === "accepted").map((s) => s.problem_id));
   const pageSize = 12;
   const [page, setPage] = useState(1);
+  const [selectedProblemIds, setSelectedProblemIds] = useState<number[]>([]);
   const totalPages = Math.max(1, Math.ceil(problems.length / pageSize));
   const visibleProblems = useMemo(() => problems.slice((page - 1) * pageSize, page * pageSize), [page, problems]);
+  const visibleIds = visibleProblems.map((problem) => problem.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedProblemIds.includes(id));
 
   useEffect(() => {
     setPage(1);
+    setSelectedProblemIds([]);
   }, [problemFilter, categoryFilter, difficultyFilter]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
+
+  function toggleProblem(problemId: number) {
+    setSelectedProblemIds((current) =>
+      current.includes(problemId) ? current.filter((id) => id !== problemId) : [...current, problemId],
+    );
+  }
+
+  function toggleVisibleProblems() {
+    setSelectedProblemIds((current) => {
+      if (allVisibleSelected) return current.filter((id) => !visibleIds.includes(id));
+      return Array.from(new Set([...current, ...visibleIds]));
+    });
+  }
 
   return (
     <div className="page-stack list-page">
@@ -4021,25 +4192,73 @@ function ProblemListView(props: {
         </div>
       </div>
 
+      {userRole === "teacher" && (
+        <div className="problem-admin-toolbar">
+          <div>
+            <strong>{selectedProblemIds.length}</strong>
+            <span>개 선택됨</span>
+          </div>
+          <div className="problem-admin-actions">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setSelectedProblemIds([])}
+              disabled={selectedProblemIds.length === 0}
+            >
+              선택 해제
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger btn-sm"
+              onClick={() => onDeleteProblems(selectedProblemIds)}
+              disabled={selectedProblemIds.length === 0}
+            >
+              선택 삭제
+            </button>
+          </div>
+        </div>
+      )}
+
       <table className="data-table problem-table">
         <thead>
           <tr>
+            {userRole === "teacher" && (
+              <th className="col-check">
+                <input
+                  type="checkbox"
+                  aria-label="현재 페이지 문제 전체 선택"
+                  checked={allVisibleSelected}
+                  onChange={toggleVisibleProblems}
+                />
+              </th>
+            )}
             <th className="col-num">#</th>
             <th>분류</th>
             <th>제목</th>
             <th>난이도</th>
             <th className="col-time">시간 제한</th>
             <th>상태</th>
+            {userRole === "teacher" && <th className="col-actions">관리</th>}
           </tr>
         </thead>
         <tbody>
           {problems.length === 0 && (
             <tr>
-              <td colSpan={6} className="empty-cell">조건에 맞는 문제가 없습니다.</td>
+              <td colSpan={userRole === "teacher" ? 8 : 6} className="empty-cell">조건에 맞는 문제가 없습니다.</td>
             </tr>
           )}
           {visibleProblems.map((p) => (
             <tr key={p.id} className="clickable" onClick={() => onOpen(p.id)}>
+              {userRole === "teacher" && (
+                <td className="col-check" onClick={(event) => event.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    aria-label={`${p.title} 선택`}
+                    checked={selectedProblemIds.includes(p.id)}
+                    onChange={() => toggleProblem(p.id)}
+                  />
+                </td>
+              )}
               <td className="mono muted">{p.id}</td>
               <td>
                 <span className="chip chip-soft">{p.category_name}</span>
@@ -4059,6 +4278,16 @@ function ProblemListView(props: {
                   <span className="muted">-</span>
                 )}
               </td>
+              {userRole === "teacher" && (
+                <td className="problem-row-actions" onClick={(event) => event.stopPropagation()}>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => onEditProblem(p.id)}>
+                    수정
+                  </button>
+                  <button type="button" className="btn btn-ghost btn-sm btn-danger" onClick={() => onDeleteProblems([p.id])}>
+                    삭제
+                  </button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -4408,6 +4637,135 @@ function SolveView(props: {
   );
 }
 
+function ConfirmDialogModal({
+  dialog,
+  onClose,
+}: {
+  dialog: ConfirmDialogConfig;
+  onClose: () => void;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+
+  async function confirm() {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await dialog.onConfirm();
+      onClose();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return createPortal(
+    <div className="confirm-backdrop" role="presentation" onClick={onClose}>
+      <article className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onClick={(event) => event.stopPropagation()}>
+        <header>
+          <span className={`confirm-icon ${dialog.tone === "danger" ? "confirm-icon-danger" : ""}`} aria-hidden="true">
+            !
+          </span>
+          <div>
+            <h2 id="confirm-title">{dialog.title}</h2>
+            <p>{dialog.body}</p>
+          </div>
+        </header>
+        <div className="confirm-actions">
+          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={submitting}>
+            {dialog.cancelLabel ?? "취소"}
+          </button>
+          <button
+            type="button"
+            className={dialog.tone === "danger" ? "btn btn-danger" : "btn btn-primary"}
+            onClick={() => void confirm()}
+            disabled={submitting}
+          >
+            {submitting ? "처리 중..." : dialog.confirmLabel}
+          </button>
+        </div>
+      </article>
+    </div>,
+    document.body,
+  );
+}
+
+function StudentMoveModal({
+  student,
+  teachers,
+  currentUser,
+  onClose,
+  onSubmit,
+}: {
+  student: UserProfile;
+  teachers: UserProfile[];
+  currentUser: UserProfile;
+  onClose: () => void;
+  onSubmit: (draft: StudentMoveDraft) => void;
+}) {
+  const teacherOptions = teachers.length > 0 ? teachers : [currentUser];
+  const initialTeacherId =
+    student.created_by_teacher_id && teacherOptions.some((teacher) => teacher.id === student.created_by_teacher_id)
+      ? student.created_by_teacher_id
+      : teacherOptions[0]?.id ?? currentUser.id;
+  const [draft, setDraft] = useState<StudentMoveDraft>({
+    teacher_id: initialTeacherId,
+    class_name: student.class_name ?? "",
+  });
+  const canSubmit = draft.teacher_id > 0 && draft.class_name.trim().length > 0;
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!canSubmit) return;
+    onSubmit(draft);
+  }
+
+  return createPortal(
+    <div className="floating-backdrop" role="presentation" onClick={onClose}>
+      <form className="floating-panel student-move-panel" role="dialog" aria-modal="true" aria-labelledby="student-move-title" onSubmit={submit} onClick={(event) => event.stopPropagation()}>
+        <header>
+          <div>
+            <h2 id="student-move-title">학생 반 이동</h2>
+            <p>{student.display_name} 학생의 담당 선생님과 반 이름을 지정합니다.</p>
+          </div>
+          <button type="button" className="submission-modal-close" onClick={onClose} aria-label="닫기">
+            x
+          </button>
+        </header>
+        <label>
+          <span>담당 선생님</span>
+          <select
+            value={draft.teacher_id}
+            onChange={(event) => setDraft((current) => ({ ...current, teacher_id: Number(event.target.value) }))}
+          >
+            {teacherOptions.map((teacher) => (
+              <option key={teacher.id} value={teacher.id}>
+                {teacher.display_name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>반 이름(시간대)</span>
+          <input
+            value={draft.class_name}
+            onChange={(event) => setDraft((current) => ({ ...current, class_name: event.target.value }))}
+            placeholder="예: 토11시 / 금2시"
+            autoFocus
+          />
+        </label>
+        <div className="confirm-actions">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>
+            취소
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={!canSubmit}>
+            이동 적용
+          </button>
+        </div>
+      </form>
+    </div>,
+    document.body,
+  );
+}
+
 function AccountsView(props: {
   user: UserProfile;
   teachers: UserProfile[];
@@ -4420,6 +4778,7 @@ function AccountsView(props: {
   onCreateStudent: (e: FormEvent) => void;
   onDeleteTeacher: (teacherId: number) => void;
   onDeleteStudent: (studentId: number) => void;
+  onMoveStudent: (studentId: number, teacherId: number, className: string) => void;
 }) {
   const {
     teachers,
@@ -4433,9 +4792,11 @@ function AccountsView(props: {
     onCreateStudent,
     onDeleteTeacher,
     onDeleteStudent,
+    onMoveStudent,
   } = props;
 
   const [activeTab, setActiveTab] = useState<"teacher" | "student">("teacher");
+  const [movingStudent, setMovingStudent] = useState<UserProfile | null>(null);
 
   const studentsByClass = useMemo(() => {
     const map = new Map<string, UserProfile[]>();
@@ -4579,6 +4940,19 @@ function AccountsView(props: {
         </section>
       )}
 
+      {movingStudent && (
+        <StudentMoveModal
+          student={movingStudent}
+          teachers={teachers}
+          currentUser={user}
+          onClose={() => setMovingStudent(null)}
+          onSubmit={(draft) => {
+            onMoveStudent(movingStudent.id, draft.teacher_id, draft.class_name.trim());
+            setMovingStudent(null);
+          }}
+        />
+      )}
+
       {activeTab === "student" && (
         <section className="card account-admin">
           <header className="card-head">
@@ -4667,13 +5041,22 @@ function AccountsView(props: {
                             <strong>{student.display_name}</strong>
                             <span className="muted small">@{student.username}</span>
                           </div>
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-sm btn-danger"
-                            onClick={() => onDeleteStudent(student.id)}
-                          >
-                            삭제
-                          </button>
+                          <div className="account-list-actions">
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => setMovingStudent(student)}
+                            >
+                              반 이동
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm btn-danger"
+                              onClick={() => onDeleteStudent(student.id)}
+                            >
+                              삭제
+                            </button>
+                          </div>
                         </li>
                       ))}
                     </ul>
@@ -5159,8 +5542,10 @@ function ManageView(props: {
   mode: "create" | "edit";
   onSubmit: (e: FormEvent) => void;
   onReset: () => void;
+  problemId: number | null;
+  onDeleteProblem: (problemId: number) => void;
 }) {
-  const { categories, problemForm, setProblemForm, mode, onSubmit, onReset } = props;
+  const { categories, problemForm, setProblemForm, mode, onSubmit, onReset, problemId, onDeleteProblem } = props;
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkError, setBulkError] = useState<string | null>(null);
@@ -5242,6 +5627,11 @@ function ManageView(props: {
           <p>필수 입력만 채워도 저장할 수 있고, 테스트케이스는 최소 10개 이상 준비되면 바로 출제할 수 있어요.</p>
         </div>
         <div className="mv-header-actions">
+          {mode === "edit" && problemId && (
+            <button type="button" className="btn btn-ghost btn-sm btn-danger" onClick={() => onDeleteProblem(problemId)}>
+              문제 삭제
+            </button>
+          )}
           <button type="button" className="btn btn-ghost btn-sm" onClick={onReset}>
             처음부터 작성
           </button>
@@ -5630,6 +6020,7 @@ function GradingPanel({ stream, isRunning }: { stream: StreamState; isRunning: b
                   <div className="result-meta mono">
                     {r.actual && <span>출력<br />{r.actual}</span>}
                     {r.expected && <span>예상 출력값<br />{r.expected}</span>}
+                    {r.stderr && <span className="bad">에러: {r.stderr}</span>}
                   </div>
                 </li>
               )}
