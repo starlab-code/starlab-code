@@ -177,6 +177,14 @@ class TestCaseRead(SQLModel):
     note: str = ""
 
 
+class TestCaseUpdate(SQLModel):
+    """단일 테스트케이스 수정용 스키마"""
+    input_data: Optional[str] = None
+    expected_output: Optional[str] = None
+    is_public: Optional[bool] = None
+    note: Optional[str] = None
+
+
 class ProblemCreate(SQLModel):
     title: str
     short_description: str

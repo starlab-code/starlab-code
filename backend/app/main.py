@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from . import auth, judge
 from .api.assignments import router as assignments_router
+from .api.problem import router as problem_router
 from .api.users import router as users_router
 from .config import settings
 from .db import create_db_and_tables, engine, get_session
@@ -61,6 +62,7 @@ app.add_middleware(
 )
 
 app.include_router(assignments_router)
+app.include_router(problem_router)
 app.include_router(users_router)
 
 
