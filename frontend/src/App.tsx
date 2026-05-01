@@ -1,4 +1,4 @@
-import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -2265,6 +2265,7 @@ export default function App() {
   }
 
   function handleDeleteProblems(problemIds: number[]) {
+    if (problemIds.length === 0) return;
     const picked = problems.filter((problem) => problemIds.includes(problem.id));
     const count = picked.length || problemIds.length;
     const names = picked.slice(0, 3).map((problem) => problem.title).join(", ");
@@ -2284,13 +2285,19 @@ export default function App() {
           await Promise.all(
             problemIds.map((id) => request<{ ok: boolean }>(`/problems/${id}`, { method: "DELETE" }, token)),
           );
-          setMessage(`${count}개 문제를 삭제했습니다.`);
+          const deletedProblemIds = new Set(problemIds);
+          setProblems((current) => current.filter((problem) => !deletedProblemIds.has(problem.id)));
+          setAssignments((current) => current.filter((assignment) => !deletedProblemIds.has(assignment.problem_id)));
+          setSubmissions((current) => current.filter((submission) => !deletedProblemIds.has(submission.problem_id)));
+          setFeed((current) => current.filter((item) => !deletedProblemIds.has(item.problem_id)));
+          setAssignmentGroups((current) => current.filter((group) => !deletedProblemIds.has(group.problem_id)));
           if (selectedProblemId && problemIds.includes(selectedProblemId)) {
             setSelectedProblemId(null);
             setSelectedProblem(null);
             navigate("problems");
           }
           await loadAppData(token, user ?? undefined);
+          setMessage(`${count}개 문제를 삭제했습니다.`);
         } catch (caught) {
           setError(caught instanceof Error ? caught.message : "문제 삭제에 실패했습니다.");
         }
@@ -4464,6 +4471,14 @@ function ProblemListView(props: {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
+  useEffect(() => {
+    const problemIds = new Set(problems.map((problem) => problem.id));
+    setSelectedProblemIds((current) => {
+      const next = current.filter((id) => problemIds.has(id));
+      return next.length === current.length ? current : next;
+    });
+  }, [problems]);
+
   function toggleProblem(problemId: number) {
     setSelectedProblemIds((current) =>
       current.includes(problemId) ? current.filter((id) => id !== problemId) : [...current, problemId],
@@ -4475,6 +4490,18 @@ function ProblemListView(props: {
       if (allVisibleSelected) return current.filter((id) => !visibleIds.includes(id));
       return Array.from(new Set([...current, ...visibleIds]));
     });
+  }
+
+  function editProblemFromRow(event: MouseEvent<HTMLButtonElement>, problemId: number) {
+    event.preventDefault();
+    event.stopPropagation();
+    onEditProblem(problemId);
+  }
+
+  function deleteProblemFromRow(event: MouseEvent<HTMLButtonElement>, problemId: number) {
+    event.preventDefault();
+    event.stopPropagation();
+    onDeleteProblems([problemId]);
   }
 
   return (
@@ -4610,10 +4637,15 @@ function ProblemListView(props: {
               </td>
               {userRole === "teacher" && (
                 <td className="problem-row-actions" onClick={(event) => event.stopPropagation()}>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => onEditProblem(p.id)}>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={(event) => editProblemFromRow(event, p.id)}>
                     수정
                   </button>
-                  <button type="button" className="btn btn-ghost btn-sm btn-danger" onClick={() => onDeleteProblems([p.id])}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm btn-danger"
+                    onClick={(event) => deleteProblemFromRow(event, p.id)}
+                    aria-label={`${p.title} 삭제`}
+                  >
                     삭제
                   </button>
                 </td>
