@@ -1067,6 +1067,11 @@ h3 { font-size: 0.95rem; font-weight: 700; }
   font-size: 12px;
   font-weight: 900;
 }
+.side-nav-marker svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+}
 .nav-back:hover:not(:disabled),
 .side-nav-link:hover,
 .side-nav-toggle:hover {

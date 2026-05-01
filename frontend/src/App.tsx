@@ -1022,6 +1022,95 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`verdict verdict-${tone}`}>{statusLabel(status)}</span>;
 }
 
+function SideNavIcon({ view }: { view: View }) {
+  const common = {
+    width: 17,
+    height: 17,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+
+  switch (view) {
+    case "home":
+      return (
+        <svg {...common}>
+          <path d="M3 10.8 12 3l9 7.8" />
+          <path d="M5.5 10v10h13V10" />
+          <path d="M9.5 20v-6h5v6" />
+        </svg>
+      );
+    case "problems":
+      return (
+        <svg {...common}>
+          <path d="M8 4h8l4 4v12H4V4h4z" />
+          <path d="M15 4v5h5" />
+          <path d="M8 13h8" />
+          <path d="M8 17h5" />
+        </svg>
+      );
+    case "assignments":
+      return (
+        <svg {...common}>
+          <rect x="5" y="4" width="14" height="16" rx="2" />
+          <path d="M9 8h6" />
+          <path d="m9 13 1.5 1.5L15 10" />
+          <path d="M9 18h6" />
+        </svg>
+      );
+    case "submissions":
+      return (
+        <svg {...common}>
+          <path d="M4 17.5V20h16v-2.5" />
+          <path d="M12 4v11" />
+          <path d="m7.5 10.5 4.5 4.5 4.5-4.5" />
+        </svg>
+      );
+    case "live":
+      return (
+        <svg {...common}>
+          <path d="M4 12h4l2-6 4 12 2-6h4" />
+          <circle cx="12" cy="12" r="9" />
+        </svg>
+      );
+    case "manage":
+      return (
+        <svg {...common}>
+          <path d="M12 3v3" />
+          <path d="M12 18v3" />
+          <path d="M4.8 7.2 7 9.4" />
+          <path d="M17 14.6l2.2 2.2" />
+          <circle cx="12" cy="12" r="4" />
+          <path d="M3 12h3" />
+          <path d="M18 12h3" />
+        </svg>
+      );
+    case "accounts":
+      return (
+        <svg {...common}>
+          <circle cx="9" cy="8" r="3" />
+          <path d="M3.5 19c.8-3.2 2.8-5 5.5-5s4.7 1.8 5.5 5" />
+          <path d="M16 7.5a2.5 2.5 0 1 1 .5 5" />
+          <path d="M17 14.5c1.8.5 3 1.9 3.5 4.5" />
+        </svg>
+      );
+    case "solve":
+      return (
+        <svg {...common}>
+          <path d="m8 9-4 3 4 3" />
+          <path d="m16 9 4 3-4 3" />
+          <path d="m14 5-4 14" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
 function BrandMark({ className = "" }: { className?: string }) {
   return (
     <span className={`brand-mark starlab-logo ${className}`} aria-hidden="true">
@@ -2551,6 +2640,7 @@ export default function App() {
       {!isEditorWindow && (
         <aside className="side-nav" aria-label="주요 메뉴">
           <div className="side-nav-scroll">
+            {/*}
             <button
               type="button"
               className="nav-back side-nav-back"
@@ -2561,6 +2651,7 @@ export default function App() {
               <span className="side-nav-marker">&lt;</span>
               <span className="side-nav-text">이전</span>
             </button>
+            */}
             <nav className="side-nav-links">
               {visibleNavItems.map((item) => (
                 <button
@@ -2569,7 +2660,9 @@ export default function App() {
                   onClick={() => handleSideNavClick(item.key)}
                   title={sidebarCollapsed ? item.label : undefined}
                 >
-                  <span className="side-nav-marker">{item.label.slice(0, 1)}</span>
+                  <span className="side-nav-marker">
+                    <SideNavIcon view={item.key} />
+                  </span>
                   <span className="side-nav-text">
                     {item.label}
                   </span>
