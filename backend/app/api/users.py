@@ -127,10 +127,6 @@ def update_teacher(
     if teacher_primary_id != primary_teacher_id:
         raise HTTPException(status_code=403, detail="다른 조직의 선생님은 수정할 수 없습니다.")
 
-    # 권한 검증: main teacher만 수정 가능 (본인 포함)
-    if not current_user.is_primary_teacher:
-        raise HTTPException(status_code=403, detail="선생님 정보 수정은 메인 선생님만 가능합니다.")
-
     # username 변경 시 중복 확인
     if payload.username is not None:
         normalized_username = payload.username.strip()
