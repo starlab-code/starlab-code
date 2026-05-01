@@ -3174,7 +3174,7 @@ function StudentAcademyHome(props: {
     .join(" ");
   const radarAxisPoints = radarRows.map((row, index) => {
     const end = radarPoint(index, radarRadius);
-    const label = radarPoint(index, radarRadius + 28);
+    const label = radarPoint(index, radarRadius + 20);
     return { row, end, label };
   });
   const radarGridRings = [25, 50, 75, 100].map((level) =>
@@ -3184,8 +3184,9 @@ function StudentAcademyHome(props: {
     }).join(" "),
   );
   const radarTotalSolved = radarRows.reduce((sum, row) => sum + row.solved, 0);
-  const pieTotal = radarTotalSolved;
-  const pieSlices = radarRows.map((row) => ({ color: "#ef1b2d", path: "", pct: row.pct, row }));
+  const radarTotalProblems = radarRows.reduce((sum, row) => sum + row.total, 0);
+  const radarAveragePct = radarTotalProblems === 0 ? 0 : Math.round((radarTotalSolved / radarTotalProblems) * 100);
+  const strongestRadarRow = [...radarRows].sort((a, b) => b.pct - a.pct || b.solved - a.solved)[0] ?? null;
   const avatarLabel = user.display_name.trim().charAt(0) || "S";
   const dueSoonCount = pendingAssignments.filter((assignment) => {
     if (!assignment.due_at) return false;
@@ -3444,7 +3445,7 @@ function StudentAcademyHome(props: {
         </div>
       </div>
 
-      <section className="sh-panel">
+      <section className="sh-panel sh-radar-panel">
         <header className="sh-panel-head">
           <h2>알고리즘별 풀이 완료 현황</h2>
           <span className="sh-panel-meta">알고리즘별 풀이 퍼센티지</span>
@@ -3453,70 +3454,74 @@ function StudentAcademyHome(props: {
           <p className="sh-empty">아직 분류별 풀이 기록이 없어요.</p>
         ) : (
           <div className="sh-radar-wrap">
-            <div className="sh-radar-chart">
-              <svg viewBox={`0 0 ${radarSize} ${radarSize}`} className="sh-radar-svg" role="img" aria-label="알고리즘별 풀이 퍼센트 분포">
-                {radarGridRings.map((points, index) => (
-                  <polygon key={index} points={points} className="sh-radar-ring" />
-                ))}
-                {radarAxisPoints.map((axis) => (
-                  <line key={axis.row.name} x1={radarCenter} y1={radarCenter} x2={axis.end.x} y2={axis.end.y} className="sh-radar-axis" />
-                ))}
-                <polygon points={radarPolygon} className="sh-radar-fill" />
-                <polygon points={radarPolygon} className="sh-radar-stroke" />
-                {radarAxisPoints.map((axis) => (
-                  <g key={`${axis.row.name}-label`}>
-                    <circle
-                      cx={radarCenter + (axis.end.x - radarCenter) * (axis.row.pct / 100)}
-                      cy={radarCenter + (axis.end.y - radarCenter) * (axis.row.pct / 100)}
-                      r="3.2"
-                      className="sh-radar-dot"
-                    />
-                    <text
-                      x={axis.label.x}
-                      y={axis.label.y}
-                      textAnchor={axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle"}
-                      dominantBaseline="middle"
-                      className="sh-radar-label"
-                    >
-                      {axis.row.name}
-                    </text>
-                    <text
-                      x={axis.label.x}
-                      y={axis.label.y + 12}
-                      textAnchor={axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle"}
-                      dominantBaseline="middle"
-                      className="sh-radar-label-pct"
-                    >
-                      {axis.row.pct}%
-                    </text>
-                  </g>
-                ))}
-                <circle cx={radarCenter} cy={radarCenter} r="20" className="sh-radar-center" />
-                <text x={radarCenter} y={radarCenter - 2} textAnchor="middle" className="sh-radar-center-num">
-                  {radarTotalSolved}
-                </text>
-                <text x={radarCenter} y={radarCenter + 10} textAnchor="middle" className="sh-radar-center-label">
-                  solved
-                </text>
-              </svg>
-              <svg viewBox="0 0 100 100" className="sh-pie-svg" role="img" aria-label="알고리즘별 풀이 분포">
-                {pieSlices.map((slice, index) => (
-                  <path key={index} d={slice.path} fill={slice.color}>
-                    <title>{`${slice.row.name} · ${slice.row.solved}문제 (${slice.pct}%)`}</title>
-                  </path>
-                ))}
-                <circle cx="50" cy="50" r="22" fill="var(--surface)" />
-                <text x="50" y="48" textAnchor="middle" className="sh-pie-center-num">
-                  {pieTotal}
-                </text>
-                <text x="50" y="60" textAnchor="middle" className="sh-pie-center-label">
-                  해결
-                </text>
-              </svg>
+            <div className="sh-radar-card">
+              <div className="sh-radar-summary">
+                <span>
+                  <strong>{radarAveragePct}%</strong>
+                  평균 완료율
+                </span>
+                <span>
+                  <strong>{radarTotalSolved}</strong>
+                  해결 문제
+                </span>
+                <span>
+                  <strong>{strongestRadarRow?.name ?? "-"}</strong>
+                  강한 분류
+                </span>
+              </div>
+              <div className="sh-radar-chart">
+                <svg viewBox={`0 0 ${radarSize} ${radarSize}`} className="sh-radar-svg" role="img" aria-label="알고리즘별 풀이 퍼센트 분포">
+                  <circle cx={radarCenter} cy={radarCenter} r={radarRadius + 10} className="sh-radar-halo" />
+                  {radarGridRings.map((points, index) => (
+                    <polygon key={index} points={points} className="sh-radar-ring" />
+                  ))}
+                  {radarAxisPoints.map((axis) => (
+                    <line key={axis.row.name} x1={radarCenter} y1={radarCenter} x2={axis.end.x} y2={axis.end.y} className="sh-radar-axis" />
+                  ))}
+                  <polygon points={radarPolygon} className="sh-radar-fill" />
+                  <polygon points={radarPolygon} className="sh-radar-stroke" />
+                  {radarAxisPoints.map((axis) => (
+                    <g key={`${axis.row.name}-label`}>
+                      <circle
+                        cx={radarCenter + (axis.end.x - radarCenter) * (axis.row.pct / 100)}
+                        cy={radarCenter + (axis.end.y - radarCenter) * (axis.row.pct / 100)}
+                        r="3.2"
+                        className="sh-radar-dot"
+                      />
+                      <text
+                        x={axis.label.x}
+                        y={axis.label.y}
+                        textAnchor={axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle"}
+                        dominantBaseline="middle"
+                        className="sh-radar-label"
+                      >
+                        {axis.row.name}
+                      </text>
+                      <text
+                        x={axis.label.x}
+                        y={axis.label.y + 12}
+                        textAnchor={axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle"}
+                        dominantBaseline="middle"
+                        className="sh-radar-label-pct"
+                      >
+                        {axis.row.pct}%
+                      </text>
+                    </g>
+                  ))}
+                  <circle cx={radarCenter} cy={radarCenter} r="20" className="sh-radar-center" />
+                  <text x={radarCenter} y={radarCenter - 2} textAnchor="middle" className="sh-radar-center-num">
+                    {radarTotalSolved}
+                  </text>
+                  <text x={radarCenter} y={radarCenter + 10} textAnchor="middle" className="sh-radar-center-label">
+                    완료
+                  </text>
+                </svg>
+              </div>
             </div>
             <ul className="sh-radar-list">
-              {radarRows.map((row) => (
+              {radarRows.map((row, index) => (
                 <li key={row.name}>
+                  <span className="sh-radar-list-rank">{index + 1}</span>
                   <span className="sh-radar-list-name">{row.name}</span>
                   <span className="sh-radar-list-count mono">
                     {row.solved}<span className="muted">/{row.total}</span>
@@ -3525,19 +3530,6 @@ function StudentAcademyHome(props: {
                   <span className="sh-radar-list-bar">
                     <span style={{ width: `${row.pct}%` }} />
                   </span>
-                </li>
-              ))}
-            </ul>
-            <ul className="sh-pie-legend">
-              {pieSlices.map((slice, index) => (
-                <li key={index}>
-                  <span className="sh-pie-dot" style={{ background: slice.color }} />
-                  <span className="sh-pie-name">{slice.row.name}</span>
-                  <span className="sh-pie-count mono">
-                    {slice.row.solved}
-                    <span className="muted">/{slice.row.total}</span>
-                  </span>
-                  <span className="sh-pie-pct mono">{slice.pct}%</span>
                 </li>
               ))}
             </ul>
