@@ -2034,13 +2034,44 @@ export default function App() {
   }
 
   async function handleMoveStudent(studentId: number, teacherId: number, className: string) {
+    if (!token || !user || user.role !== "teacher") return;
     const student = students.find((item) => item.id === studentId);
     const teacher = teachers.find((item) => item.id === teacherId) ?? (user?.id === teacherId ? user : null);
-    setError(null);
-    setMessage(
-      `${student?.display_name ?? "선택한 학생"} 반 이동 입력을 확인했습니다. ` +
-        `담당 선생님: ${teacher?.display_name ?? "선택한 선생님"}, 반: ${className}`,
-    );
+    setConfirmDialog({
+      title: "반 이동",
+      body:
+        `${student?.display_name ?? "선택한 학생"}을(를) ` +
+        `${teacher?.display_name ?? "선택한 선생님"} / ${className} 반으로 이동할까요?`,
+      confirmLabel: "이동",
+      tone: "default",
+      onConfirm: async () => {
+        setError(null);
+        setMessage(null);
+        if (isPreviewMode) {
+          setMessage(
+            `${student?.display_name ?? "선택한 학생"} 반 이동 UI를 확인했습니다. ` +
+              `담당 선생님: ${teacher?.display_name ?? "선택한 선생님"}, 반: ${className}`,
+          );
+          return;
+        }
+        try {
+          await request<UserProfile>(
+            `/users/students/${studentId}`,
+            {
+              method: "PATCH",
+              body: JSON.stringify({ primary_teacher_id: teacherId, class_name: className }),
+            },
+            token,
+          );
+          setMessage(
+            `${student?.display_name ?? "학생"}을(를) ${teacher?.display_name ?? "선택한 선생님"} / ${className} 반으로 이동했습니다.`,
+          );
+          await loadAppData(token, user);
+        } catch (caught) {
+          setError(caught instanceof Error ? caught.message : "반 이동에 실패했습니다.");
+        }
+      },
+    });
   }
 
   function handleDeleteProblems(problemIds: number[]) {
