@@ -1099,8 +1099,8 @@ h3 { font-size: 0.95rem; font-weight: 700; }
 .side-nav-toggle {
   margin: 0.75rem;
   width: calc(100% - 1.5rem);
-  border-color: var(--line);
-  background: #fff;
+  border-color: transparent;
+  background: transparent;
 }
 .app-layout-collapsed .side-nav-text,
 .app-layout-collapsed .side-toggle-text {
@@ -4224,17 +4224,17 @@ h3 { font-size: 0.95rem; font-weight: 700; }
   text-align: right;
 }
 .sh-radar-panel {
-  width: min(50%, 640px);
+  width: min(72%, 960px);
   justify-self: center;
 }
 .sh-radar-wrap {
   display: grid;
-  grid-template-columns: minmax(205px, 230px) minmax(0, 1fr);
-  gap: 0.75rem;
+  grid-template-columns: minmax(360px, 410px) minmax(0, 1fr);
+  gap: 2.35rem;
   align-items: stretch;
   max-width: 100%;
   margin: 0 auto;
-  padding: 0.78rem 0.82rem 0.9rem;
+  padding: 1rem 1.15rem 1.1rem;
 }
 .sh-radar-card {
   display: grid;
@@ -4280,13 +4280,14 @@ h3 { font-size: 0.95rem; font-weight: 700; }
   align-items: center;
   justify-content: center;
   min-width: 0;
-  min-height: 210px;
+  min-height: 310px;
+  padding: 0.4rem 1.6rem;
   border-radius: 14px;
   background:
     linear-gradient(180deg, #fbfcfe 0%, #ffffff 100%);
 }
 .sh-radar-svg {
-  width: min(100%, 224px);
+  width: min(100%, 380px);
   height: auto;
   display: block;
   overflow: visible;
@@ -4419,6 +4420,13 @@ h3 { font-size: 0.95rem; font-weight: 700; }
   .sh-radar-wrap {
     grid-template-columns: 1fr;
   }
+  .sh-radar-wrap {
+    gap: 0.9rem;
+  }
+  .sh-radar-chart {
+    min-height: 300px;
+    padding: 0.4rem 1rem;
+  }
   .sh-radar-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -4426,7 +4434,7 @@ h3 { font-size: 0.95rem; font-weight: 700; }
     grid-column: 1 / -1;
   }
   .sh-pie-svg { max-width: 200px; margin: 0 auto; }
-  .sh-radar-svg { width: min(100%, 300px); }
+  .sh-radar-svg { width: min(100%, 380px); }
 }
 
 /* ========== Manage redesign ========== */
@@ -4870,6 +4878,14 @@ h3 { font-size: 0.95rem; font-weight: 700; }
   .sh-header,
   .sh-grid { grid-template-columns: 1fr; }
   .sh-radar-panel { width: 100%; }
+  .sh-radar-wrap {
+    grid-template-columns: 1fr;
+    gap: 0.9rem;
+    max-width: 680px;
+  }
+  .sh-radar-list {
+    max-height: 260px;
+  }
   .sh-stats {
     border-left: 0;
     border-top: 1px solid #edf1f7;

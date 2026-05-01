@@ -3501,7 +3501,7 @@ function StudentAcademyHome(props: {
                 </span>
               </div>
               <div className="sh-radar-chart">
-                <svg viewBox={`0 0 ${radarSize} ${radarSize}`} className="sh-radar-svg" role="img" aria-label="알고리즘별 풀이 퍼센트 분포">
+                <svg viewBox={`-56 -18 ${radarSize + 112} ${radarSize + 36}`} className="sh-radar-svg" role="img" aria-label="알고리즘별 풀이 퍼센트 분포">
                   <circle cx={radarCenter} cy={radarCenter} r={radarRadius + 10} className="sh-radar-halo" />
                   {radarGridRings.map((points, index) => (
                     <polygon key={index} points={points} className="sh-radar-ring" />
