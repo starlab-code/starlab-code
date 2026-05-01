@@ -1344,7 +1344,8 @@ h3 { font-size: 0.95rem; font-weight: 700; }
 
 .live-eyebrow { background: rgba(220, 53, 69, 0.25) !important; }
 .live-dot {
-  display: inline-block;
+  display: inline-flex;
+  vertical-align: middle;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -1353,6 +1354,11 @@ h3 { font-size: 0.95rem; font-weight: 700; }
   animation: live-pulse 1.5s ease-out infinite;
 }
 .live-dot-paused { animation: none; background: #aaa; box-shadow: none; }
+.live-feed-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.56rem;
+}
 @keyframes live-pulse {
   0% { box-shadow: 0 0 0 0 rgba(255, 59, 59, 0.55); }
   70% { box-shadow: 0 0 0 8px rgba(255, 59, 59, 0); }
@@ -2598,17 +2604,33 @@ h3 { font-size: 0.95rem; font-weight: 700; }
 }
 .teacher-home .th-header-left {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.85rem;
 }
+.teacher-home .th-header-left > div {
+  transform: translateY(-2px);
+}
 .teacher-home .th-live-dot {
-  width: 8px;
-  height: 8px;
+  position: relative;
+  display: inline-flex;
+  width: 9px;
+  height: 9px;
   border-radius: 999px;
   background: var(--progress-fill);
   box-shadow: 0 0 0 0 rgba(239, 27, 45, 0.28);
   animation: live-pulse 2s ease-out infinite;
   flex: 0 0 auto;
+  align-self: center;
+}
+.teacher-home .th-header-left > .th-live-dot {
+  align-self: flex-start;
+  margin-top: 0.48rem;
+}
+.teacher-home .panel-head h2 .th-live-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 1px;
+  margin-right: 0.12rem;
 }
 .teacher-home .th-live-dot.paused {
   background: var(--muted);
@@ -2934,6 +2956,9 @@ h3 { font-size: 0.95rem; font-weight: 700; }
   border-bottom: 1px solid #eef1f7;
 }
 .dash-welcome-text .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;

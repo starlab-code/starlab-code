@@ -2494,18 +2494,18 @@ export default function App() {
                 <BrandMark className="auth-logo-mark" />
               </div>
               <h1>
-                스타랩
+                StarLab
                 <br />
                 <span>Expert</span>
               </h1>
               <p>
-                문제 풀이, 과제, 제출 관리용 교육 플랫폼입니다.
+                문제 풀이, 과제, 제출 관리용 교육 플랫폼
               </p>
             </div>
             <div className="auth-feature-list" aria-hidden="true">
-              <div><span>01</span> 실시간 채점 기능</div>
-              <div><span>02</span> 학생별 과제, 제출 기록 관리</div>
-              <div><span>03</span> 학생별 학습 흐름 확인</div>
+              <div><span>#</span> 학생별 과제, 제출 기록 관리</div>
+              <div><span>#</span> 학생별 학습 흐름 확인</div>
+              <div><span>#</span> 실시간 채점 기능</div>
             </div>
           </aside>
 
@@ -2515,7 +2515,7 @@ export default function App() {
             <div className="auth-glass-card">
               <div>
                 <h2>로그인</h2>
-                <p>아이디와 비밀번호로 수업 화면에 접속하세요.</p>
+                <p>"Hello World"</p>
               </div>
 
               {(message || error) && (
@@ -2528,7 +2528,7 @@ export default function App() {
                 <label className="auth-dark-field">
                   <span>아이디</span>
                   <div>
-                    <b aria-hidden="true">@</b>
+                    <b aria-hidden="true">ID</b>
                     <input
                       value={loginDraft.username}
                       onChange={(e) => setLoginDraft((c) => ({ ...c, username: e.target.value }))}
@@ -2541,7 +2541,7 @@ export default function App() {
                 <label className="auth-dark-field">
                   <span>비밀번호</span>
                   <div>
-                    <b aria-hidden="true">*</b>
+                    <b aria-hidden="true">PW</b>
                     <input
                       type="password"
                       value={loginDraft.password}
@@ -3919,7 +3919,7 @@ function TeacherHomeRedesign(props: {
         <div className="th-header-left">
           <span className={`th-live-dot ${paused ? "paused" : ""}`} />
           <div>
-            <div className="th-header-title">{user.display_name} 선생님의 오늘도 순항 중입니다</div>
+            <div className="th-header-title">{user.display_name}, 안녕하세요</div>
             <div className="th-header-sub">
               오늘 <strong>{metrics?.todayActiveStudents ?? 0}명</strong>이 활동 중이고 총 학생{" "}
               <strong>{students.length}명</strong>, 배정 과제는 <strong>{dashboard?.assigned_count ?? 0}건</strong>입니다.
@@ -4142,7 +4142,7 @@ function LiveFeedView(props: {
     <div className="page-stack list-page">
       <header className="page-head page-head-tight">
         <div>
-          <h1>
+          <h1 className="live-feed-title">
             <span className={`live-dot ${paused ? "live-dot-paused" : ""}`} />
             실시간 채점 피드
           </h1>
