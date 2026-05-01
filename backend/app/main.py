@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -28,6 +30,11 @@ from .models import (
     ProblemUpdate,
     RunCodeRequest,
     Submission,
+    SubmissionJob,
+    SubmissionJobCreateResponse,
+    SubmissionJobKind,
+    SubmissionJobRead,
+    SubmissionJobStatus,
     SubmissionStatus,
     StudentCreate,
     TeacherCreate,
@@ -65,6 +72,11 @@ app.include_router(problem_router)
 app.include_router(users_router)
 
 
+_job_wakeup = threading.Event()
+_job_worker_started = False
+_job_worker_lock = threading.Lock()
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     try:
@@ -76,9 +88,11 @@ def on_startup() -> None:
         pass
 
     create_db_and_tables()
+    reset_interrupted_jobs()
     if settings.seed_demo_data:
         with Session(engine) as session:
             seed_initial_data(session)
+    start_submission_job_worker()
 
 
 def to_user_read(user: User) -> UserRead:
@@ -896,6 +910,184 @@ def validate_submission_assignment(
     return assignment
 
 
+def reset_interrupted_jobs() -> None:
+    with Session(engine) as session:
+        jobs = session.exec(
+            select(SubmissionJob).where(SubmissionJob.status == SubmissionJobStatus.running)
+        ).all()
+        for job in jobs:
+            job.status = SubmissionJobStatus.queued
+            job.started_at = None
+            session.add(job)
+        session.commit()
+
+
+def start_submission_job_worker() -> None:
+    global _job_worker_started
+    with _job_worker_lock:
+        if _job_worker_started:
+            return
+        worker = threading.Thread(target=submission_job_worker_loop, daemon=True, name="submission-job-worker")
+        worker.start()
+        _job_worker_started = True
+
+
+def submission_job_worker_loop() -> None:
+    while True:
+        try:
+            processed = process_next_submission_job()
+            if not processed:
+                _job_wakeup.wait(timeout=2.0)
+                _job_wakeup.clear()
+        except Exception:
+            time.sleep(1.0)
+
+
+def process_next_submission_job() -> bool:
+    with Session(engine) as session:
+        job = session.exec(
+            select(SubmissionJob)
+            .where(SubmissionJob.status == SubmissionJobStatus.queued)
+            .order_by(SubmissionJob.created_at, SubmissionJob.id)
+        ).first()
+        if not job:
+            return False
+        job.status = SubmissionJobStatus.running
+        job.started_at = datetime.utcnow()
+        session.add(job)
+        session.commit()
+        job_id = job.id
+    if job_id is None:
+        return True
+
+    try:
+        with Session(engine) as session:
+            job = session.get(SubmissionJob, job_id)
+            if not job:
+                return True
+            problem = session.get(Problem, job.problem_id)
+            if not problem:
+                raise ValueError("Problem not found")
+            tests = fetch_tests(session, job.problem_id, public_only=job.kind == SubmissionJobKind.run)
+            if not tests:
+                raise ValueError("No testcases configured")
+            payload = RunCodeRequest(code=job.code, language=job.language, assignment_id=job.assignment_id)
+            session.expunge_all()
+
+        execution = execute_problem(problem, payload, tests)
+
+        with Session(engine) as session:
+            job = session.get(SubmissionJob, job_id)
+            if not job:
+                return True
+            submission_id: Optional[int] = None
+            if job.kind == SubmissionJobKind.submit:
+                submission = Submission(
+                    problem_id=job.problem_id,
+                    user_id=job.user_id,
+                    assignment_id=job.assignment_id,
+                    language=job.language,
+                    code=job.code,
+                    status=SubmissionStatus(execution.status),
+                    passed_tests=execution.passed_tests,
+                    total_tests=execution.total_tests,
+                    runtime_ms=max((result.runtime_ms for result in execution.results), default=0),
+                )
+                session.add(submission)
+                session.commit()
+                session.refresh(submission)
+                submission_id = submission.id
+                job = session.get(SubmissionJob, job_id)
+                if not job:
+                    return True
+            job.status = SubmissionJobStatus.completed
+            job.completed_at = datetime.utcnow()
+            job.result_json = json.dumps(execution.dict(), default=str)
+            job.submission_id = submission_id
+            session.add(job)
+            session.commit()
+    except Exception as exc:
+        with Session(engine) as session:
+            job = session.get(SubmissionJob, job_id)
+            if job:
+                job.status = SubmissionJobStatus.failed
+                job.error_message = str(exc)
+                job.completed_at = datetime.utcnow()
+                session.add(job)
+                session.commit()
+    return True
+
+
+def submission_job_queue_position(session: Session, job: SubmissionJob) -> int:
+    if job.status == SubmissionJobStatus.running:
+        return 0
+    if job.status != SubmissionJobStatus.queued or job.id is None:
+        return 0
+    running_count = len(session.exec(
+        select(SubmissionJob.id).where(SubmissionJob.status == SubmissionJobStatus.running)
+    ).all())
+    queued_ids = session.exec(
+        select(SubmissionJob.id)
+        .where(SubmissionJob.status == SubmissionJobStatus.queued)
+        .order_by(SubmissionJob.created_at, SubmissionJob.id)
+    ).all()
+    try:
+        return running_count + queued_ids.index(job.id) + 1
+    except ValueError:
+        return running_count + 1
+
+
+def submission_job_to_read(session: Session, job: SubmissionJob) -> SubmissionJobRead:
+    result = None
+    if job.result_json:
+        result = CodeExecutionResponse.parse_obj(json.loads(job.result_json))
+    return SubmissionJobRead(
+        id=job.id or 0,
+        kind=job.kind,
+        status=job.status,
+        queue_position=submission_job_queue_position(session, job),
+        result=result,
+        error_message=job.error_message,
+        submission_id=job.submission_id,
+    )
+
+
+def enqueue_submission_job(
+    problem_id: int,
+    payload: RunCodeRequest,
+    kind: SubmissionJobKind,
+    current_user: User,
+) -> SubmissionJobCreateResponse:
+    with Session(engine) as session:
+        problem = session.get(Problem, problem_id)
+        if not problem:
+            raise HTTPException(status_code=404, detail="Problem not found")
+        assignment_id = None
+        if kind == SubmissionJobKind.submit:
+            assignment = validate_submission_assignment(session, payload.assignment_id, problem_id, current_user)
+            assignment_id = assignment.id if assignment else None
+        tests = fetch_tests(session, problem_id, public_only=kind == SubmissionJobKind.run)
+        if not tests:
+            raise HTTPException(status_code=400, detail="No testcases configured")
+        job = SubmissionJob(
+            kind=kind,
+            status=SubmissionJobStatus.queued,
+            problem_id=problem_id,
+            user_id=current_user.id or 0,
+            assignment_id=assignment_id,
+            language=payload.language,
+            code=payload.code,
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        position = submission_job_queue_position(session, job)
+        job_id = job.id or 0
+        job_status = job.status
+    _job_wakeup.set()
+    return SubmissionJobCreateResponse(job_id=job_id, status=job_status, queue_position=position)
+
+
 def execute_problem(problem: Problem, payload: RunCodeRequest, tests: List[TestCase]) -> CodeExecutionResponse:
     test_inputs = [{"input": testcase.input_data, "expected": testcase.expected_output} for testcase in tests]
     raw_results = judge.run_code(
@@ -918,12 +1110,45 @@ def execute_problem(problem: Problem, payload: RunCodeRequest, tests: List[TestC
     )
 
 
+@app.post("/problems/{problem_id}/run/jobs", response_model=SubmissionJobCreateResponse)
+def enqueue_visible_tests(
+    problem_id: int,
+    payload: RunCodeRequest,
+    current_user: User = Depends(auth.get_current_user),
+):
+    return enqueue_submission_job(problem_id, payload, SubmissionJobKind.run, current_user)
+
+
+@app.post("/problems/{problem_id}/submit/jobs", response_model=SubmissionJobCreateResponse)
+def enqueue_submit_solution(
+    problem_id: int,
+    payload: RunCodeRequest,
+    current_user: User = Depends(auth.get_current_user),
+):
+    return enqueue_submission_job(problem_id, payload, SubmissionJobKind.submit, current_user)
+
+
+@app.get("/submission-jobs/{job_id}", response_model=SubmissionJobRead)
+def get_submission_job(
+    job_id: int,
+    current_user: User = Depends(auth.get_current_user),
+):
+    with Session(engine) as session:
+        job = session.get(SubmissionJob, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Submission job not found")
+        if current_user.role != UserRole.teacher and job.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Cannot view this submission job")
+        return submission_job_to_read(session, job)
+
+
 @app.post("/problems/{problem_id}/run", response_model=CodeExecutionResponse)
 def run_visible_tests(
     problem_id: int,
     payload: RunCodeRequest,
     current_user: User = Depends(auth.get_current_user),
 ):
+    raise HTTPException(status_code=410, detail="Direct grading is disabled. Use /run/jobs instead.")
     del current_user
     # Release the DB connection before invoking the judge subprocess.
     with Session(engine) as session:
@@ -944,6 +1169,7 @@ def submit_solution(
     payload: RunCodeRequest,
     current_user: User = Depends(auth.get_current_user),
 ):
+    raise HTTPException(status_code=410, detail="Direct grading is disabled. Use /submit/jobs instead.")
     # Phase 1: load everything we need, then release the connection.
     with Session(engine) as session:
         problem = session.get(Problem, problem_id)
@@ -1025,6 +1251,7 @@ def run_visible_tests_stream(
     payload: RunCodeRequest,
     current_user: User = Depends(auth.get_current_user),
 ):
+    raise HTTPException(status_code=410, detail="Direct streaming grading is disabled. Use /run/jobs instead.")
     del current_user
     # Open and close the DB session before streaming so the connection is not
     # held while the (potentially slow) judge subprocess runs. On Render's
@@ -1054,6 +1281,7 @@ def submit_solution_stream(
     payload: RunCodeRequest,
     current_user: User = Depends(auth.get_current_user),
 ):
+    raise HTTPException(status_code=410, detail="Direct streaming grading is disabled. Use /submit/jobs instead.")
     # See run_visible_tests_stream: release the DB connection before judging.
     with Session(engine) as session:
         problem = session.get(Problem, problem_id)

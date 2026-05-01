@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
+from sqlalchemy import Column, Text
 from sqlmodel import Field, SQLModel
 
 
@@ -27,6 +28,18 @@ class SubmissionStatus(str, Enum):
     runtime_error = "runtime_error"
     time_limit = "time_limit"
     unsupported_language = "unsupported_language"
+
+
+class SubmissionJobKind(str, Enum):
+    run = "run"
+    submit = "submit"
+
+
+class SubmissionJobStatus(str, Enum):
+    queued = "queued"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
 
 
 class User(SQLModel, table=True):
@@ -102,6 +115,23 @@ class Submission(SQLModel, table=True):
     total_tests: int = 0
     runtime_ms: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SubmissionJob(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kind: SubmissionJobKind = Field(index=True)
+    status: SubmissionJobStatus = Field(default=SubmissionJobStatus.queued, index=True)
+    problem_id: int = Field(foreign_key="problem.id", index=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    assignment_id: Optional[int] = Field(default=None, foreign_key="assignment.id")
+    language: str = "python"
+    code: str = Field(sa_column=Column(Text))
+    result_json: Optional[str] = Field(default=None, sa_column=Column(Text))
+    error_message: Optional[str] = None
+    submission_id: Optional[int] = Field(default=None, foreign_key="submission.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
 
 
 class UserCreate(SQLModel):
@@ -331,6 +361,22 @@ class CodeExecutionResponse(SQLModel):
     passed_tests: int
     total_tests: int
     results: List[TestExecutionResult]
+
+
+class SubmissionJobCreateResponse(SQLModel):
+    job_id: int
+    status: SubmissionJobStatus
+    queue_position: int
+
+
+class SubmissionJobRead(SQLModel):
+    id: int
+    kind: SubmissionJobKind
+    status: SubmissionJobStatus
+    queue_position: int = 0
+    result: Optional[CodeExecutionResponse] = None
+    error_message: Optional[str] = None
+    submission_id: Optional[int] = None
 
 
 class DashboardSummary(SQLModel):

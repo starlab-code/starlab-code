@@ -147,11 +147,29 @@ type ExecutionResponse = {
 
 type StreamState = {
   kind: "run" | "submit";
+  phase?: "queued" | "running" | "completed" | "failed";
+  queuePosition?: number;
   total: number;
   completed: number;
   results: ExecutionResult[];
   done: boolean;
   summary: { status: string; passed_tests: number; total_tests: number; runtime_ms: number } | null;
+};
+
+type SubmissionJobCreateResponse = {
+  job_id: number;
+  status: "queued" | "running" | "completed" | "failed";
+  queue_position: number;
+};
+
+type SubmissionJobRead = {
+  id: number;
+  kind: "run" | "submit";
+  status: "queued" | "running" | "completed" | "failed";
+  queue_position: number;
+  result: ExecutionResponse | null;
+  error_message: string | null;
+  submission_id: number | null;
 };
 
 type DashboardSummary = {
@@ -2474,6 +2492,79 @@ export default function App() {
     }
   }
 
+  async function executeQueued(kind: "run" | "submit") {
+    if (isPreviewMode) {
+      await executeStream(kind);
+      return;
+    }
+    if (!token || !selectedProblemId) return;
+    setIsRunning(true);
+    setError(null);
+    setMessage(null);
+    setStream({ kind, phase: "queued", queuePosition: 1, total: 0, completed: 0, results: [], done: false, summary: null });
+    try {
+      const payload = {
+        code: codeDrafts[`${selectedProblemId}-${editorLanguage}`]
+          ?? (editorLanguage === "c" ? C_STARTER : selectedProblem?.starter_code_python ?? ""),
+        language: editorLanguage,
+        assignment_id:
+          kind === "submit" && user?.role === "student"
+            ? currentProblemAssignments.find((a) => a.student_id === user.id)?.id ?? null
+            : null,
+      };
+      const created = await request<SubmissionJobCreateResponse>(
+        `/problems/${selectedProblemId}/${kind === "run" ? "run/jobs" : "submit/jobs"}`,
+        { method: "POST", body: JSON.stringify(payload) },
+        token,
+      );
+      setStream((prev) => prev ? { ...prev, phase: created.status, queuePosition: created.queue_position } : prev);
+
+      let finalSummary: StreamState["summary"] = null;
+      while (!finalSummary) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        const job = await request<SubmissionJobRead>(`/submission-jobs/${created.job_id}`, {}, token);
+        if (job.status === "failed") {
+          throw new Error(job.error_message || "Grading job failed.");
+        }
+        if (job.result) {
+          finalSummary = {
+            status: job.result.status,
+            passed_tests: job.result.passed_tests,
+            total_tests: job.result.total_tests,
+            runtime_ms: job.result.results.reduce((max, result) => Math.max(max, result.runtime_ms), 0),
+          };
+          setStream((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  phase: "completed",
+                  queuePosition: 0,
+                  total: job.result?.total_tests ?? 0,
+                  completed: job.result?.results.length ?? 0,
+                  results: job.result?.results ?? [],
+                  done: true,
+                  summary: finalSummary,
+                }
+              : prev,
+          );
+        } else {
+          setStream((prev) => prev ? { ...prev, phase: job.status, queuePosition: job.queue_position } : prev);
+        }
+      }
+
+      if (kind === "submit") {
+        await loadAppData(token, user ?? undefined);
+        setMessage(`Submit result: ${statusLabel(finalSummary.status)}`);
+      } else {
+        setMessage("Sample run complete");
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Execution failed.");
+    } finally {
+      setIsRunning(false);
+    }
+  }
+
   async function saveProblem(event: FormEvent) {
     event.preventDefault();
     if (!token) return;
@@ -3003,8 +3094,8 @@ export default function App() {
                 ...(selectedProblemId ? { [`${selectedProblemId}-${editorLanguage}`]: next } : {}),
               }))
             }
-            onRun={() => void executeStream("run")}
-            onSubmit={() => void executeStream("submit")}
+            onRun={() => void executeQueued("run")}
+            onSubmit={() => void executeQueued("submit")}
             isRunning={isRunning}
             stream={stream}
             submissions={submissions.filter((s) => s.problem_id === selectedProblemId)}
@@ -6312,6 +6403,14 @@ function GradingPanel({ stream, isRunning }: { stream: StreamState; isRunning: b
   const badgeTone = finalTone === "ok" ? "ok" : finalTone === "warn" ? "warn" : "bad";
   const firstErrorResult = stream.results.find((result) => result.stderr.trim());
   const errorMessage = firstErrorResult?.stderr.trim() ?? "";
+  const waitingLabel =
+    stream.phase === "queued"
+      ? `Waiting${stream.queuePosition ? ` (#${stream.queuePosition})` : ""}`
+      : stream.phase === "running"
+        ? "Grading"
+        : stream.kind === "run"
+          ? "Running samples"
+          : "Grading";
 
   return (
     <div className="sv-grade">
@@ -6324,7 +6423,7 @@ function GradingPanel({ stream, isRunning }: { stream: StreamState; isRunning: b
           ) : (
             <>
               <span className="sv-ldot" />
-              <span>{stream.kind === "run" ? "예제 실행 중" : "채점 중"}</span>
+              <span>{waitingLabel}</span>
             </>
           )}
         </div>
