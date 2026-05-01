@@ -1855,6 +1855,7 @@ export default function App() {
       memory_limit_mb: problem.memory_limit_mb,
       testcases:
         problem.all_testcases?.map((tc) => ({
+          id: tc.id,
           input_data: tc.input_data,
           expected_output: tc.expected_output,
           is_public: tc.is_public,
@@ -2286,16 +2287,84 @@ export default function App() {
       return;
     }
     try {
-      const payload = {
-        ...problemForm,
-        testcases: problemForm.testcases.filter((tc) => tc.input_data.trim() || tc.expected_output.trim()),
-      };
+      const filledTcs = problemForm.testcases.filter((tc) => tc.input_data.trim() || tc.expected_output.trim());
+      const payload = { ...problemForm, testcases: filledTcs };
+
       if (problemFormMode === "edit" && selectedProblemId) {
+        // 1. 문제 메타데이터만 PUT (testcases 제외 → 백엔드가 TC를 건드리지 않음)
+        const { testcases: _tcs, ...metaOnly } = payload;
         await request<ProblemDetail>(
           `/problems/${selectedProblemId}`,
-          { method: "PUT", body: JSON.stringify(payload) },
+          { method: "PUT", body: JSON.stringify(metaOnly) },
           token,
         );
+
+        // 2. TC delta 계산
+        const originalTcs = selectedProblem?.all_testcases ?? [];
+        const originalById = new Map(
+          originalTcs.filter((tc) => tc.id != null).map((tc) => [tc.id!, tc]),
+        );
+        const formIdSet = new Set(filledTcs.filter((tc) => tc.id != null).map((tc) => tc.id!));
+
+        const toDelete = [...originalById.keys()].filter((id) => !formIdSet.has(id));
+        const toPost = filledTcs.filter((tc) => tc.id == null);
+        const toPatch = filledTcs.filter((tc) => {
+          if (tc.id == null) return false;
+          const orig = originalById.get(tc.id);
+          if (!orig) return false;
+          return (
+            tc.input_data !== orig.input_data ||
+            tc.expected_output !== orig.expected_output ||
+            tc.is_public !== orig.is_public ||
+            tc.note !== orig.note
+          );
+        });
+
+        // 3. POST/DELETE 순서 결정: 중간 상태에서 10개 미만 or 50개 초과가 없도록 처리
+        //    POST-first: 현재 개수 + 새 TC ≤ 50 이면 안전
+        //    DELETE-first: 현재 개수 - 삭제 TC ≥ 10 이면 안전
+        //    둘 다 불가능하면 PUT으로 일괄 교체 (폴백)
+        const currentCount = originalTcs.length;
+        const postFirst = currentCount + toPost.length <= 50;
+        const deleteFirst = currentCount - toDelete.length >= 10;
+
+        if (!postFirst && !deleteFirst && (toPost.length > 0 || toDelete.length > 0)) {
+          // 폴백: TC 전체를 PUT으로 일괄 교체
+          await request<ProblemDetail>(
+            `/problems/${selectedProblemId}`,
+            { method: "PUT", body: JSON.stringify(payload) },
+            token,
+          );
+        } else {
+          const baseUrl = `/problems/${selectedProblemId}/testcases`;
+
+          const postAll = async () => {
+            for (const tc of toPost) {
+              const { id: _id, ...tcBody } = tc;
+              await request<TestCase>(baseUrl, { method: "POST", body: JSON.stringify(tcBody) }, token);
+            }
+          };
+          const deleteAll = async () => {
+            for (const id of toDelete) {
+              await request<{ ok: boolean }>(`${baseUrl}/${id}`, { method: "DELETE" }, token);
+            }
+          };
+
+          if (postFirst) {
+            await postAll();
+            await deleteAll();
+          } else {
+            await deleteAll();
+            await postAll();
+          }
+
+          // 수정된 기존 TC PATCH (순서 무관)
+          for (const tc of toPatch) {
+            const { id: tcId, ...tcBody } = tc;
+            await request<TestCase>(`${baseUrl}/${tcId}`, { method: "PATCH", body: JSON.stringify(tcBody) }, token);
+          }
+        }
+
         setMessage("문제를 수정했습니다.");
       } else {
         const created = await request<ProblemDetail>(
