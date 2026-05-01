@@ -5,61 +5,75 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';" />
   <title>Starlab Code</title>
   <style>
+    :root {
+      --bg: #f6f6f7;
+      --surface: #ffffff;
+      --line: #e1e3e6;
+      --text: #141417;
+      --text-soft: #3f4248;
+      --muted: #76787b;
+      --accent: #ef1b2d;
+      --accent-strong: #b80f1f;
+      --accent-soft: #fff1f3;
+      --progress-track: #eceef1;
+      --bad: #dc2626;
+      --bad-soft: #fdecec;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", "Apple SD Gothic Neo", sans-serif;
-      background: linear-gradient(180deg, #eef2fb 0%, #f4f6fa 100%);
-      color: #1f2937;
+      font-family: "Pretendard Variable", "Noto Sans KR", "Segoe UI", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+      background:
+        radial-gradient(circle at 50% 22%, rgba(239, 27, 45, 0.12), transparent 32%),
+        linear-gradient(180deg, #fff6f7 0%, var(--bg) 54%, #f2f3f5 100%);
+      color: var(--text);
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
+      -webkit-font-smoothing: antialiased;
       -webkit-user-select: none;
       user-select: none;
     }
     .panel {
-      width: min(520px, calc(100vw - 80px));
-      padding: 56px 56px 48px;
+      width: min(440px, calc(100vw - 2rem));
+      padding: 2.4rem 2.2rem 2rem;
       text-align: center;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid rgba(201, 209, 222, 0.75);
+      border-radius: 16px;
+      box-shadow: 0 18px 54px rgba(15, 23, 42, 0.11);
     }
     .brand {
-      width: 56px; height: 56px;
-      margin: 0 auto 28px;
-      border-radius: 16px;
-      background: #0b5fff;
-      color: #fff;
+      width: 72px; height: 72px;
+      margin: 0 auto 22px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 24px; font-weight: 800;
-      letter-spacing: -0.6px;
-      box-shadow: 0 14px 30px rgba(11, 95, 255, 0.28);
     }
     .brand img {
       width: 100%;
       height: 100%;
       display: block;
       object-fit: contain;
-      padding: 7px;
     }
     h1 {
       font-size: 22px;
       font-weight: 700;
-      color: #0f172a;
+      color: var(--text);
       margin-bottom: 10px;
-      letter-spacing: -0.3px;
+      letter-spacing: -0.01em;
     }
     .subtitle {
       font-size: 13.5px;
-      color: #475569;
+      color: var(--text-soft);
       line-height: 1.6;
-      margin-bottom: 32px;
+      margin-bottom: 30px;
       min-height: 22px;
     }
     .progress {
       position: relative;
       width: 100%;
       height: 6px;
-      background: #dbe3f1;
+      background: var(--progress-track);
       border-radius: 999px;
       overflow: hidden;
       margin-bottom: 12px;
@@ -67,7 +81,7 @@
     .progress-fill {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, #0b5fff, #4d8aff);
+      background: linear-gradient(90deg, var(--accent), #ff7b86);
       border-radius: 999px;
       transition: width 200ms ease-out;
     }
@@ -85,7 +99,7 @@
     }
     .progress-text {
       font-size: 12px;
-      color: #64748b;
+      color: var(--muted);
       font-variant-numeric: tabular-nums;
       letter-spacing: 0.2px;
       min-height: 18px;
@@ -96,24 +110,24 @@
       justify-content: center;
       gap: 10px;
       font-size: 13.5px;
-      color: #0b5fff;
+      color: var(--accent);
       margin-top: 6px;
     }
     .install-row.is-visible { display: flex; }
     .spinner {
       width: 18px; height: 18px;
       border-radius: 50%;
-      border: 2px solid #c7d6f7;
-      border-top-color: #0b5fff;
+      border: 2px solid var(--accent-soft);
+      border-top-color: var(--accent);
       animation: spin 800ms linear infinite;
       flex-shrink: 0;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .error {
       display: none;
-      background: #fef2f2;
-      border: 1px solid #fecaca;
-      color: #b91c1c;
+      background: var(--bad-soft);
+      border: 1px solid #f5c2c2;
+      color: var(--bad);
       padding: 12px 14px;
       border-radius: 12px;
       font-size: 13px;
@@ -125,23 +139,25 @@
     .retry {
       display: none;
       margin-top: 16px;
-      background: #0b5fff;
+      background: var(--accent);
       color: #fff;
-      border: none;
-      padding: 10px 22px;
-      border-radius: 10px;
+      border: 1px solid var(--accent);
+      padding: 0.55rem 1.2rem;
+      border-radius: 8px;
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
       font-family: inherit;
+      transition: background 0.15s, border-color 0.15s, transform 0.05s;
       -webkit-app-region: no-drag;
     }
     .retry.is-visible { display: inline-block; }
-    .retry:hover { background: #093fb0; }
+    .retry:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+    .retry:active { transform: translateY(1px); }
     .meta {
       font-size: 11px;
-      color: #94a3b8;
-      margin-top: 26px;
+      color: var(--muted);
+      margin-top: 24px;
       letter-spacing: 0.4px;
       min-height: 14px;
     }
