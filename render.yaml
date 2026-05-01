@@ -13,6 +13,16 @@ services:
         value: 3.12.7
       - key: STARLAB_SEED_DEMO_DATA
         value: true
+      - key: STARLAB_JUDGE_CONCURRENCY
+        value: 1
+      - key: STARLAB_THREADPOOL_SIZE
+        value: 8
+      - key: STARLAB_DB_POOL_SIZE
+        value: 20
+      - key: STARLAB_DB_MAX_OVERFLOW
+        value: 5
+      - key: STARLAB_DB_POOL_TIMEOUT_SECONDS
+        value: 10
       - key: STARLAB_ALLOW_ORIGINS
         sync: false
       - key: STARLAB_SECRET_KEY

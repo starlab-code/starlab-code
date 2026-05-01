@@ -28,7 +28,6 @@ from .models import (
     ProblemUpdate,
     RunCodeRequest,
     Submission,
-    SubmissionFeedItem,
     SubmissionStatus,
     StudentCreate,
     TeacherCreate,
@@ -799,69 +798,76 @@ def list_submissions(
     return submissions
 
 
-@app.get("/submissions/feed", response_model=List[SubmissionFeedItem])
-def submission_feed(
-    limit: int = Query(default=50, ge=1, le=100),
-    since_id: Optional[int] = Query(default=None),
-    current_user: User = Depends(auth.require_teacher),
-    session: Session = Depends(get_session),
-):
-    statement = (
-        select(Submission, User, Problem)
-        .join(User, Submission.user_id == User.id)
-        .join(Problem, Submission.problem_id == Problem.id)
-    )
-    if current_user.is_primary_teacher:
-        org_teacher_ids = [t.id for t in list_teachers_in_org(session, current_user)]
-        org_teacher_ids.append(current_user.id)
-        statement = statement.where(User.primary_teacher_id.in_(org_teacher_ids))
-    else:
-        statement = statement.where(User.primary_teacher_id == current_user.id)
-    if since_id is not None:
-        statement = statement.where(Submission.id > since_id)
-
-    rows = session.exec(
-        statement.order_by(Submission.created_at.desc()).limit(limit)
-    ).all()
-    if not rows:
-        return []
-
-    assignment_ids = {sub.assignment_id for sub, _user, _problem in rows if sub.assignment_id is not None}
-    assignments_map: Dict[int, Assignment] = {}
-    if assignment_ids:
-        assignments_map = {
-            a.id: a
-            for a in session.exec(
-                select(Assignment).where(Assignment.id.in_(assignment_ids))
-            ).all()
-        }
-    categories = category_lookup(session)
-
-    feed: List[SubmissionFeedItem] = []
-    for sub, student, problem in rows:
-        category = categories.get(problem.category_id) if problem else None
-        assignment = assignments_map.get(sub.assignment_id) if sub.assignment_id else None
-        feed.append(
-            SubmissionFeedItem(
-                id=sub.id,
-                student_id=sub.user_id,
-                student_name=student.display_name if student else "(알 수 없음)",
-                student_username=student.username if student else "",
-                class_name=student.class_name if student else None,
-                problem_id=sub.problem_id,
-                problem_title=problem.title if problem else "",
-                category_name=category.name if category else "",
-                assignment_id=sub.assignment_id,
-                assignment_title=assignment.title if assignment else None,
-                language=sub.language,
-                status=sub.status,
-                passed_tests=sub.passed_tests,
-                total_tests=sub.total_tests,
-                runtime_ms=sub.runtime_ms,
-                created_at=sub.created_at,
-            )
-        )
-    return feed
+# --- DISABLED: real-time submission feed -------------------------------------
+# Temporarily disabled because the teacher-side polling (every 10s per teacher)
+# was a steady source of DB connection pressure on Render's free tier and was
+# implicated in repeated SQLAlchemy QueuePool timeouts. Kept (commented) so it
+# can be re-enabled when the service moves to a larger plan or to Fly.io.
+#
+# @app.get("/submissions/feed", response_model=List[SubmissionFeedItem])
+# def submission_feed(
+#     limit: int = Query(default=50, ge=1, le=100),
+#     since_id: Optional[int] = Query(default=None),
+#     current_user: User = Depends(auth.require_teacher),
+#     session: Session = Depends(get_session),
+# ):
+#     statement = (
+#         select(Submission, User, Problem)
+#         .join(User, Submission.user_id == User.id)
+#         .join(Problem, Submission.problem_id == Problem.id)
+#     )
+#     if current_user.is_primary_teacher:
+#         org_teacher_ids = [t.id for t in list_teachers_in_org(session, current_user)]
+#         org_teacher_ids.append(current_user.id)
+#         statement = statement.where(User.primary_teacher_id.in_(org_teacher_ids))
+#     else:
+#         statement = statement.where(User.primary_teacher_id == current_user.id)
+#     if since_id is not None:
+#         statement = statement.where(Submission.id > since_id)
+#
+#     rows = session.exec(
+#         statement.order_by(Submission.created_at.desc()).limit(limit)
+#     ).all()
+#     if not rows:
+#         return []
+#
+#     assignment_ids = {sub.assignment_id for sub, _user, _problem in rows if sub.assignment_id is not None}
+#     assignments_map: Dict[int, Assignment] = {}
+#     if assignment_ids:
+#         assignments_map = {
+#             a.id: a
+#             for a in session.exec(
+#                 select(Assignment).where(Assignment.id.in_(assignment_ids))
+#             ).all()
+#         }
+#     categories = category_lookup(session)
+#
+#     feed: List[SubmissionFeedItem] = []
+#     for sub, student, problem in rows:
+#         category = categories.get(problem.category_id) if problem else None
+#         assignment = assignments_map.get(sub.assignment_id) if sub.assignment_id else None
+#         feed.append(
+#             SubmissionFeedItem(
+#                 id=sub.id,
+#                 student_id=sub.user_id,
+#                 student_name=student.display_name if student else "(알 수 없음)",
+#                 student_username=student.username if student else "",
+#                 class_name=student.class_name if student else None,
+#                 problem_id=sub.problem_id,
+#                 problem_title=problem.title if problem else "",
+#                 category_name=category.name if category else "",
+#                 assignment_id=sub.assignment_id,
+#                 assignment_title=assignment.title if assignment else None,
+#                 language=sub.language,
+#                 status=sub.status,
+#                 passed_tests=sub.passed_tests,
+#                 total_tests=sub.total_tests,
+#                 runtime_ms=sub.runtime_ms,
+#                 created_at=sub.created_at,
+#             )
+#         )
+#     return feed
+# --- END DISABLED ------------------------------------------------------------
 
 
 def fetch_tests(session: Session, problem_id: int, public_only: bool) -> List[TestCase]:
@@ -917,14 +923,15 @@ def run_visible_tests(
     problem_id: int,
     payload: RunCodeRequest,
     current_user: User = Depends(auth.get_current_user),
-    session: Session = Depends(get_session),
 ):
     del current_user
-    problem = session.get(Problem, problem_id)
-    if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
-
-    tests = fetch_tests(session, problem_id, public_only=True)
+    # Release the DB connection before invoking the judge subprocess.
+    with Session(engine) as session:
+        problem = session.get(Problem, problem_id)
+        if not problem:
+            raise HTTPException(status_code=404, detail="Problem not found")
+        tests = fetch_tests(session, problem_id, public_only=True)
+        session.expunge_all()
     if not tests:
         raise HTTPException(status_code=400, detail="No public testcases configured")
 
@@ -936,34 +943,37 @@ def submit_solution(
     problem_id: int,
     payload: RunCodeRequest,
     current_user: User = Depends(auth.get_current_user),
-    session: Session = Depends(get_session),
 ):
-    problem = session.get(Problem, problem_id)
-    if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
-
-    assignment = validate_submission_assignment(session, payload.assignment_id, problem_id, current_user)
-    assignment_id = assignment.id if assignment else None
-
-    tests = fetch_tests(session, problem_id, public_only=False)
+    # Phase 1: load everything we need, then release the connection.
+    with Session(engine) as session:
+        problem = session.get(Problem, problem_id)
+        if not problem:
+            raise HTTPException(status_code=404, detail="Problem not found")
+        assignment = validate_submission_assignment(session, payload.assignment_id, problem_id, current_user)
+        assignment_id = assignment.id if assignment else None
+        tests = fetch_tests(session, problem_id, public_only=False)
+        session.expunge_all()
     if not tests:
         raise HTTPException(status_code=400, detail="No testcases configured")
 
+    # Phase 2: judge without holding any DB connection (this is the slow part).
     execution = execute_problem(problem, payload, tests)
 
-    submission = Submission(
-        problem_id=problem_id,
-        user_id=current_user.id,
-        assignment_id=assignment_id,
-        language=payload.language,
-        code=payload.code,
-        status=SubmissionStatus(execution.status),
-        passed_tests=execution.passed_tests,
-        total_tests=execution.total_tests,
-        runtime_ms=max((result.runtime_ms for result in execution.results), default=0),
-    )
-    session.add(submission)
-    session.commit()
+    # Phase 3: persist the submission with a fresh, short-lived session.
+    with Session(engine) as session:
+        submission = Submission(
+            problem_id=problem_id,
+            user_id=current_user.id,
+            assignment_id=assignment_id,
+            language=payload.language,
+            code=payload.code,
+            status=SubmissionStatus(execution.status),
+            passed_tests=execution.passed_tests,
+            total_tests=execution.total_tests,
+            runtime_ms=max((result.runtime_ms for result in execution.results), default=0),
+        )
+        session.add(submission)
+        session.commit()
 
     return execution
 
@@ -1014,13 +1024,21 @@ def run_visible_tests_stream(
     problem_id: int,
     payload: RunCodeRequest,
     current_user: User = Depends(auth.get_current_user),
-    session: Session = Depends(get_session),
 ):
     del current_user
-    problem = session.get(Problem, problem_id)
-    if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
-    tests = fetch_tests(session, problem_id, public_only=True)
+    # Open and close the DB session before streaming so the connection is not
+    # held while the (potentially slow) judge subprocess runs. On Render's
+    # 0.1 vCPU free tier judging can take several seconds per submission;
+    # holding a pooled connection through the StreamingResponse exhausts the
+    # SQLAlchemy QueuePool with only a handful of concurrent users.
+    with Session(engine) as session:
+        problem = session.get(Problem, problem_id)
+        if not problem:
+            raise HTTPException(status_code=404, detail="Problem not found")
+        tests = fetch_tests(session, problem_id, public_only=True)
+        # Fully detach loaded ORM objects from the session before it closes
+        # so the streaming generator can use them without lazy-loading.
+        session.expunge_all()
     if not tests:
         raise HTTPException(status_code=400, detail="No public testcases configured")
 
@@ -1035,22 +1053,25 @@ def submit_solution_stream(
     problem_id: int,
     payload: RunCodeRequest,
     current_user: User = Depends(auth.get_current_user),
-    session: Session = Depends(get_session),
 ):
-    problem = session.get(Problem, problem_id)
-    if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
+    # See run_visible_tests_stream: release the DB connection before judging.
+    with Session(engine) as session:
+        problem = session.get(Problem, problem_id)
+        if not problem:
+            raise HTTPException(status_code=404, detail="Problem not found")
 
-    assignment = validate_submission_assignment(session, payload.assignment_id, problem_id, current_user)
-    assignment_id = assignment.id if assignment else None
+        assignment = validate_submission_assignment(session, payload.assignment_id, problem_id, current_user)
+        assignment_id = assignment.id if assignment else None
 
-    tests = fetch_tests(session, problem_id, public_only=False)
+        tests = fetch_tests(session, problem_id, public_only=False)
+        session.expunge_all()
     if not tests:
         raise HTTPException(status_code=400, detail="No testcases configured")
 
     user_id = current_user.id
     language = payload.language
     code = payload.code
+    total_tests = len(tests)
 
     def on_complete(status: str, passed: int, runtime_ms: int):
         with Session(engine) as local_session:
@@ -1062,7 +1083,7 @@ def submit_solution_stream(
                 code=code,
                 status=SubmissionStatus(status),
                 passed_tests=passed,
-                total_tests=len(tests),
+                total_tests=total_tests,
                 runtime_ms=runtime_ms,
             )
             local_session.add(submission)

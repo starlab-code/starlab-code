@@ -1733,7 +1733,9 @@ export default function App() {
       if (profile.role === "teacher") {
         calls.push(request<UserProfile[]>("/teachers", {}, nextToken));
         calls.push(request<UserProfile[]>("/students", {}, nextToken));
-        calls.push(request<SubmissionFeedItem[]>("/submissions/feed?limit=50", {}, nextToken));
+        // DISABLED: real-time feed endpoint is commented out on the backend to
+        // avoid steady DB pool pressure on Render's free tier.
+        // calls.push(request<SubmissionFeedItem[]>("/submissions/feed?limit=50", {}, nextToken));
         calls.push(request<AssignmentGroup[]>("/assignments/groups", {}, nextToken));
       }
       const leaderboardCallIndex = calls.length;
@@ -1748,7 +1750,6 @@ export default function App() {
         submissionsResult,
         teachersResult,
         studentsResult,
-        feedResult,
         groupsResult,
       ] = results as [
         DashboardSummary,
@@ -1758,7 +1759,6 @@ export default function App() {
         Submission[],
         UserProfile[] | undefined,
         UserProfile[] | undefined,
-        SubmissionFeedItem[] | undefined,
         AssignmentGroup[] | undefined,
       ];
       const leaderboardResult = results[leaderboardCallIndex] as LeaderboardEntry[] | undefined;
@@ -1774,12 +1774,10 @@ export default function App() {
       setStudents(studentsResult ?? []);
       setAssignmentGroups(groupsResult ?? []);
       setLeaderboard(leaderboardResult ?? []);
+      setFeed([]);
+      lastFeedIdRef.current = 0;
       if (isEditorWindow) {
         setView("solve");
-      }
-      if (feedResult) {
-        setFeed(feedResult);
-        lastFeedIdRef.current = feedResult.reduce((max, f) => (f.id > max ? f.id : max), 0);
       }
 
       if (selectedProblemId === null) {
@@ -1938,35 +1936,38 @@ export default function App() {
   }, [token, selectedProblemId, isPreviewMode]);
 
   // Teacher live feed polling
-  useEffect(() => {
-    if (!token || !user || user.role !== "teacher" || feedPaused || isPreviewMode) return;
-    const intervalId = window.setInterval(async () => {
-      try {
-        const sinceId = lastFeedIdRef.current;
-        const path = sinceId > 0 ? `/submissions/feed?since_id=${sinceId}` : "/submissions/feed?limit=50";
-        const fresh = await request<SubmissionFeedItem[]>(path, {}, token);
-        if (fresh.length === 0) return;
-        const maxId = fresh.reduce((max, f) => (f.id > max ? f.id : max), sinceId);
-        lastFeedIdRef.current = maxId;
-        setFeed((current) => {
-          const merged = [...fresh, ...current];
-          const seen = new Set<number>();
-          const dedup: SubmissionFeedItem[] = [];
-          for (const item of merged) {
-            if (seen.has(item.id)) continue;
-            seen.add(item.id);
-            dedup.push(item);
-          }
-          return dedup.slice(0, 80);
-        });
-        setFeedHighlightId(fresh[0].id);
-        window.setTimeout(() => setFeedHighlightId(null), 2200);
-      } catch {
-        /* swallow polling errors */
-      }
-    }, 10000);
-    return () => window.clearInterval(intervalId);
-  }, [token, user, feedPaused, isPreviewMode]);
+  // DISABLED: Render free tier + Supabase pooler couldn't sustain the steady
+  // background polling. Re-enable together with the backend /submissions/feed
+  // route once we move to a larger plan.
+  // useEffect(() => {
+  //   if (!token || !user || user.role !== "teacher" || feedPaused || isPreviewMode) return;
+  //   const intervalId = window.setInterval(async () => {
+  //     try {
+  //       const sinceId = lastFeedIdRef.current;
+  //       const path = sinceId > 0 ? `/submissions/feed?since_id=${sinceId}` : "/submissions/feed?limit=50";
+  //       const fresh = await request<SubmissionFeedItem[]>(path, {}, token);
+  //       if (fresh.length === 0) return;
+  //       const maxId = fresh.reduce((max, f) => (f.id > max ? f.id : max), sinceId);
+  //       lastFeedIdRef.current = maxId;
+  //       setFeed((current) => {
+  //         const merged = [...fresh, ...current];
+  //         const seen = new Set<number>();
+  //         const dedup: SubmissionFeedItem[] = [];
+  //         for (const item of merged) {
+  //           if (seen.has(item.id)) continue;
+  //           seen.add(item.id);
+  //           dedup.push(item);
+  //         }
+  //         return dedup.slice(0, 80);
+  //       });
+  //       setFeedHighlightId(fresh[0].id);
+  //       window.setTimeout(() => setFeedHighlightId(null), 2200);
+  //     } catch {
+  //       /* swallow polling errors */
+  //     }
+  //   }, 10000);
+  //   return () => window.clearInterval(intervalId);
+  // }, [token, user, feedPaused, isPreviewMode]);
 
   function navigate(next: View) {
     setView((current) => {
@@ -2778,7 +2779,9 @@ export default function App() {
     { key: "manage", label: "문제 관리", show: user.role === "teacher" },
     { key: "accounts", label: "계정 관리", show: user.role === "teacher" },
   ];
-  const visibleNavItems = navItems.filter((item) => item.show);
+  // DISABLED: real-time feed tab stays out of the UI while the backend feed
+  // endpoint and polling are commented out for Render free-tier stability.
+  const visibleNavItems = navItems.filter((item) => item.show && item.key !== "live");
   const currentViewLabel = visibleNavItems.find((item) => item.key === view)?.label ?? "학습 화면";
   const appClassName = isEditorWindow
     ? "app-root app-root-editor"
@@ -2959,6 +2962,7 @@ export default function App() {
           />
         )}
 
+        {/* DISABLED: real-time feed view is kept for a future re-enable.
         {view === "live" && user.role === "teacher" && (
           <LiveFeedView
             feed={feed}
@@ -2967,7 +2971,7 @@ export default function App() {
             onTogglePause={() => setFeedPaused((p) => !p)}
             onOpenProblem={openProblem}
           />
-        )}
+        )} */}
 
         {view === "problems" && (
           <ProblemListView
