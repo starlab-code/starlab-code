@@ -125,9 +125,11 @@ def list_teachers_in_org(session: Session, current_user: User) -> List[User]:
 def list_students_for_teacher(session: Session, current_user: User) -> List[User]:
     statement = select(User).where(User.role == UserRole.student)
     if current_user.is_primary_teacher:
-        statement = statement.where(User.primary_teacher_id == get_primary_teacher_id(current_user))
+        org_teacher_ids = [t.id for t in list_teachers_in_org(session, current_user)]
+        org_teacher_ids.append(current_user.id)
+        statement = statement.where(User.primary_teacher_id.in_(org_teacher_ids))
     else:
-        statement = statement.where(User.created_by_teacher_id == current_user.id)
+        statement = statement.where(User.primary_teacher_id == current_user.id)
     return session.exec(statement.order_by(User.class_name, User.display_name)).all()
 
 
@@ -344,13 +346,29 @@ def leaderboard(
     current_user: User = Depends(auth.get_current_user),
     session: Session = Depends(get_session),
 ):
-    primary_teacher_id = get_primary_teacher_id(current_user)
-    students = session.exec(
-        select(User).where(
-            User.role == UserRole.student,
-            User.primary_teacher_id == primary_teacher_id,
-        )
-    ).all()
+    if current_user.role == UserRole.student:
+        students = session.exec(
+            select(User).where(
+                User.role == UserRole.student,
+                User.primary_teacher_id == current_user.primary_teacher_id,
+            )
+        ).all()
+    elif current_user.is_primary_teacher:
+        org_teacher_ids = [t.id for t in list_teachers_in_org(session, current_user)]
+        org_teacher_ids.append(current_user.id)
+        students = session.exec(
+            select(User).where(
+                User.role == UserRole.student,
+                User.primary_teacher_id.in_(org_teacher_ids),
+            )
+        ).all()
+    else:
+        students = session.exec(
+            select(User).where(
+                User.role == UserRole.student,
+                User.primary_teacher_id == current_user.id,
+            )
+        ).all()
     if not students:
         return []
 
@@ -521,7 +539,7 @@ def create_student_account(
         hashed_password=auth.get_password_hash(payload.password),
         role=UserRole.student,
         class_name=class_name,
-        primary_teacher_id=get_primary_teacher_id(current_user),
+        primary_teacher_id=current_user.id,
         created_by_teacher_id=current_user.id,
         is_primary_teacher=False,
     )
@@ -559,10 +577,11 @@ def delete_student_account(
         raise HTTPException(status_code=404, detail="Student not found")
 
     primary_teacher_id = get_primary_teacher_id(current_user)
-    if student.primary_teacher_id != primary_teacher_id:
+    assigned_teacher = session.get(User, student.primary_teacher_id) if student.primary_teacher_id else None
+    if assigned_teacher is None or get_primary_teacher_id(assigned_teacher) != primary_teacher_id:
         raise HTTPException(status_code=403, detail="Cannot delete a student from another organization")
-    if not current_user.is_primary_teacher and student.created_by_teacher_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Only the creating teacher or primary teacher can delete this student")
+    if not current_user.is_primary_teacher and student.primary_teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the assigned teacher or primary teacher can delete this student")
 
     _delete_student_records(session, student)
     session.commit()
