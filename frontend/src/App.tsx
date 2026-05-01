@@ -4832,13 +4832,15 @@ function AccountsView(props: {
   const studentsByClass = useMemo(() => {
     const map = new Map<string, UserProfile[]>();
     for (const student of students) {
+      if (student.role !== "student") continue;
+      if (student.primary_teacher_id !== user.id) continue;
       const key = (student.class_name ?? "").trim() || "반 미지정";
       const bucket = map.get(key) ?? [];
       bucket.push(student);
       map.set(key, bucket);
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [students]);
+  }, [students, user.id]);
 
   return (
     <div className="page-stack list-page">
@@ -4856,7 +4858,7 @@ function AccountsView(props: {
           </span>
           <span className="summary-pill">
             <span className="muted small">내 학생</span>
-            <strong>{students.length}</strong>
+            <strong>{studentsByClass.reduce((sum, [, list]) => sum + list.length, 0)}</strong>
           </span>
         </div>
       </header>
@@ -4874,7 +4876,7 @@ function AccountsView(props: {
           className={activeTab === "student" ? "auth-role-tab auth-role-tab-active" : "auth-role-tab"}
           onClick={() => setActiveTab("student")}
         >
-          학생 계정 ({students.length})
+          학생 계정 ({studentsByClass.reduce((sum, [, list]) => sum + list.length, 0)})
         </button>
       </div>
 
@@ -5053,10 +5055,9 @@ function AccountsView(props: {
           <div className="account-list-card">
             <div className="account-card-head">
               <h3>반별 학생 목록</h3>
-              <span className="muted small">내가 만든 학생만 보입니다.</span>
             </div>
-            {students.length === 0 ? (
-              <p className="empty-inline">아직 만든 학생이 없습니다.</p>
+            {studentsByClass.length === 0 ? (
+              <p className="empty-inline">아직 등록된 학생이 없습니다.</p>
             ) : (
               <div className="account-class-stack">
                 {studentsByClass.map(([className, list]) => (
