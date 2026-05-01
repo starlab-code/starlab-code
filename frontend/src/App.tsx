@@ -1060,7 +1060,7 @@ function buildAutocompletions(fragment: string, code: string, language: "python"
   let m: RegExpExecArray | null;
   while ((m = re.exec(code)) !== null) {
     const w = m[0];
-    if (w.startsWith(fragment) && w !== fragment && !seen.has(w)) {
+    if (w.startsWith(fragment) && w !== fragment && !seen.has(w) && !keywords.has(w) && !builtins.has(w)) {
       seen.add(w);
       result.push({ word: w, kind: "identifier" });
     }
