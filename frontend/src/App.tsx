@@ -1285,6 +1285,18 @@ function CodeEditor({
         return;
       }
     }
+
+    if (e.key === "}" && language === "c" && ss === se) {
+      const lineStart = code.lastIndexOf("\n", ss - 1) + 1;
+      const prefix = code.slice(lineStart, ss);
+      if (/^ +$/.test(prefix) && prefix.length >= 4) {
+        e.preventDefault();
+        const newPos = ss - 4;
+        onChange(code.slice(0, newPos) + "}" + code.slice(se));
+        requestAnimationFrame(() => ta.setSelectionRange(newPos + 1, newPos + 1));
+        return;
+      }
+    }
   }
 
   function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
