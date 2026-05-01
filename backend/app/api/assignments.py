@@ -151,7 +151,7 @@ def create_assignments(
             select(User).where(
                 User.role == UserRole.student,
                 User.class_name == resolved_class_name,
-                User.created_by_teacher_id == current_user.id,
+                User.primary_teacher_id == current_user.id,
             )
         ).all()
         if not class_students:
@@ -168,7 +168,7 @@ def create_assignments(
         if (
             not student
             or student.role != UserRole.student
-            or student.created_by_teacher_id != current_user.id
+            or student.primary_teacher_id != current_user.id
         ):
             continue
         assignment = Assignment(

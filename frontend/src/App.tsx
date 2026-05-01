@@ -1,4 +1,4 @@
-import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -9,6 +9,7 @@ type UserRole = "teacher" | "student";
 type Difficulty = "beginner" | "basic" | "intermediate";
 type AssignmentType = "homework" | "classroom";
 type HealthState = "checking" | "ok" | "down";
+type AppTheme = "light" | "dark";
 type View =
   | "home"
   | "problems"
@@ -748,10 +749,6 @@ function formatStudyDuration(startedAt: number, now: Date) {
   return `${hours}시간 ${minutes}분`;
 }
 
-function userInitial(name: string) {
-  return name.trim().slice(0, 1).toUpperCase() || "S";
-}
-
 function readEditorWindowState() {
   if (typeof window === "undefined") {
     return { enabled: false, problemId: null as number | null };
@@ -1020,6 +1017,75 @@ function DifficultyBadge({ level }: { level: Difficulty }) {
 function StatusBadge({ status }: { status: string }) {
   const tone = statusTone(status);
   return <span className={`verdict verdict-${tone}`}>{statusLabel(status)}</span>;
+}
+
+function ThemeToggleIcon({ targetTheme }: { targetTheme: AppTheme }) {
+  const common = {
+    width: 18,
+    height: 18,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+
+  if (targetTheme === "dark") {
+    return (
+      <svg {...common} className="theme-toggle-icon">
+        <path d="M20.5 14.2A7.7 7.7 0 0 1 9.8 3.5 8.6 8.6 0 1 0 20.5 14.2Z" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg {...common} className="theme-toggle-icon">
+      <circle cx="12" cy="12" r="4.2" />
+      <path d="M12 2.8v2" />
+      <path d="M12 19.2v2" />
+      <path d="m4.5 4.5 1.4 1.4" />
+      <path d="m18.1 18.1 1.4 1.4" />
+      <path d="M2.8 12h2" />
+      <path d="M19.2 12h2" />
+      <path d="m4.5 19.5 1.4-1.4" />
+      <path d="m18.1 5.9 1.4-1.4" />
+    </svg>
+  );
+}
+
+function ProfileRoleIcon({ role }: { role: UserRole }) {
+  const common = {
+    width: 18,
+    height: 18,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+
+  if (role === "teacher") {
+    return (
+      <svg {...common} className="profile-avatar-icon profile-avatar-icon-teacher">
+        <rect x="12.1" y="4.3" width="8.2" height="8.2" rx="0.8" />
+        <circle className="profile-avatar-icon-fill" cx="6.4" cy="5.9" r="2.4" />
+        <path className="profile-avatar-icon-fill" d="M3.8 18.7v-7.9c0-1.4 1.1-2.5 2.5-2.5h0.2c1.4 0 2.5 1.1 2.5 2.5v7.9H7.4v-5.5h-2v5.5H3.8Z" />
+        <path d="M8.4 10.6 11 12l3.6-2.4" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg {...common} className="profile-avatar-icon">
+      <path d="M12 4 4 8l8 4 8-4-8-4Z" />
+      <path d="M6.8 10.2v4.2c1.6 1.5 3.3 2.2 5.2 2.2s3.6-.7 5.2-2.2v-4.2" />
+      <path d="M20 8v5" />
+    </svg>
+  );
 }
 
 function SideNavIcon({ view }: { view: View }) {
@@ -1410,6 +1476,10 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() =>
     typeof window === "undefined" ? false : localStorage.getItem("starlab-sidebar-collapsed") === "1",
   );
+  const [appTheme, setAppTheme] = useState<AppTheme>(() => {
+    if (typeof window === "undefined") return "light";
+    return localStorage.getItem("starlab-theme") === "dark" ? "dark" : "light";
+  });
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogConfig | null>(null);
   const [clockNow, setClockNow] = useState(() => new Date());
@@ -1755,6 +1825,12 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("starlab-sidebar-collapsed", sidebarCollapsed ? "1" : "0");
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = appTheme;
+    document.documentElement.style.colorScheme = appTheme;
+    localStorage.setItem("starlab-theme", appTheme);
+  }, [appTheme]);
 
   useEffect(() => {
     if (!message) return;
@@ -2189,6 +2265,7 @@ export default function App() {
   }
 
   function handleDeleteProblems(problemIds: number[]) {
+    if (problemIds.length === 0) return;
     const picked = problems.filter((problem) => problemIds.includes(problem.id));
     const count = picked.length || problemIds.length;
     const names = picked.slice(0, 3).map((problem) => problem.title).join(", ");
@@ -2208,13 +2285,19 @@ export default function App() {
           await Promise.all(
             problemIds.map((id) => request<{ ok: boolean }>(`/problems/${id}`, { method: "DELETE" }, token)),
           );
-          setMessage(`${count}개 문제를 삭제했습니다.`);
+          const deletedProblemIds = new Set(problemIds);
+          setProblems((current) => current.filter((problem) => !deletedProblemIds.has(problem.id)));
+          setAssignments((current) => current.filter((assignment) => !deletedProblemIds.has(assignment.problem_id)));
+          setSubmissions((current) => current.filter((submission) => !deletedProblemIds.has(submission.problem_id)));
+          setFeed((current) => current.filter((item) => !deletedProblemIds.has(item.problem_id)));
+          setAssignmentGroups((current) => current.filter((group) => !deletedProblemIds.has(group.problem_id)));
           if (selectedProblemId && problemIds.includes(selectedProblemId)) {
             setSelectedProblemId(null);
             setSelectedProblem(null);
             navigate("problems");
           }
           await loadAppData(token, user ?? undefined);
+          setMessage(`${count}개 문제를 삭제했습니다.`);
         } catch (caught) {
           setError(caught instanceof Error ? caught.message : "문제 삭제에 실패했습니다.");
         }
@@ -2718,6 +2801,17 @@ export default function App() {
               <strong>{studyDuration}</strong>
             </span>
           </div>
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={() => setAppTheme((current) => (current === "dark" ? "light" : "dark"))}
+            aria-label={appTheme === "dark" ? "라이트 테마로 변경" : "다크 테마로 변경"}
+            title={appTheme === "dark" ? "라이트 테마" : "다크 테마"}
+          >
+            <span className="theme-toggle-mark">
+              <ThemeToggleIcon targetTheme={appTheme === "dark" ? "light" : "dark"} />
+            </span>
+          </button>
           <div className="profile-menu-wrap" ref={profileMenuRef}>
             <button
               type="button"
@@ -2726,7 +2820,9 @@ export default function App() {
               aria-haspopup="menu"
               aria-expanded={profileMenuOpen}
             >
-              <span className="profile-avatar">{userInitial(user.display_name)}</span>
+              <span className="profile-avatar" aria-hidden="true">
+                <ProfileRoleIcon role={user.role} />
+              </span>
               <span className="profile-trigger-copy">
                 <strong>{user.display_name}</strong>
                 <span>
@@ -3008,8 +3104,8 @@ function AppFooter({
         <div className="footer-brand">
           <BrandMark className="footer-brand-mark" />
           <div>
-            <strong>Starlab Code</strong>
-            <span>수업용 알고리즘 학습 플랫폼</span>
+            <strong>Starlab Expert</strong>
+            <span>Confidential Starlab. 2026</span>
           </div>
         </div>
         <div className="footer-meta">
@@ -3629,34 +3725,40 @@ function StudentAcademyHome(props: {
                   ))}
                   <polygon points={radarPolygon} className="sh-radar-fill" />
                   <polygon points={radarPolygon} className="sh-radar-stroke" />
-                  {radarAxisPoints.map((axis) => (
-                    <g key={`${axis.row.name}-label`}>
-                      <circle
-                        cx={radarCenter + (axis.end.x - radarCenter) * (axis.row.pct / 100)}
-                        cy={radarCenter + (axis.end.y - radarCenter) * (axis.row.pct / 100)}
-                        r="3.2"
-                        className="sh-radar-dot"
-                      />
-                      <text
-                        x={axis.label.x}
-                        y={axis.label.y}
-                        textAnchor={axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle"}
-                        dominantBaseline="middle"
-                        className="sh-radar-label"
-                      >
-                        {axis.row.name}
-                      </text>
-                      <text
-                        x={axis.label.x}
-                        y={axis.label.y + 12}
-                        textAnchor={axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle"}
-                        dominantBaseline="middle"
-                        className="sh-radar-label-pct"
-                      >
-                        {axis.row.pct}%
-                      </text>
-                    </g>
-                  ))}
+                  {radarAxisPoints.map((axis) => {
+                    const isTopLabel = axis.label.y < radarCenter && Math.abs(axis.label.x - radarCenter) < 8;
+                    const labelY = axis.label.y + (isTopLabel ? -14 : 0);
+                    const anchor = axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle";
+
+                    return (
+                      <g key={`${axis.row.name}-label`}>
+                        <circle
+                          cx={radarCenter + (axis.end.x - radarCenter) * (axis.row.pct / 100)}
+                          cy={radarCenter + (axis.end.y - radarCenter) * (axis.row.pct / 100)}
+                          r="3.2"
+                          className="sh-radar-dot"
+                        />
+                        <text
+                          x={axis.label.x}
+                          y={labelY}
+                          textAnchor={anchor}
+                          dominantBaseline="middle"
+                          className="sh-radar-label"
+                        >
+                          {axis.row.name}
+                        </text>
+                        <text
+                          x={axis.label.x}
+                          y={labelY + 12}
+                          textAnchor={anchor}
+                          dominantBaseline="middle"
+                          className="sh-radar-label-pct"
+                        >
+                          {axis.row.pct}%
+                        </text>
+                      </g>
+                    );
+                  })}
                   <circle cx={radarCenter} cy={radarCenter} r="20" className="sh-radar-center" />
                   <text x={radarCenter} y={radarCenter - 2} textAnchor="middle" className="sh-radar-center-num">
                     {radarTotalSolved}
@@ -4369,6 +4471,14 @@ function ProblemListView(props: {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
+  useEffect(() => {
+    const problemIds = new Set(problems.map((problem) => problem.id));
+    setSelectedProblemIds((current) => {
+      const next = current.filter((id) => problemIds.has(id));
+      return next.length === current.length ? current : next;
+    });
+  }, [problems]);
+
   function toggleProblem(problemId: number) {
     setSelectedProblemIds((current) =>
       current.includes(problemId) ? current.filter((id) => id !== problemId) : [...current, problemId],
@@ -4380,6 +4490,18 @@ function ProblemListView(props: {
       if (allVisibleSelected) return current.filter((id) => !visibleIds.includes(id));
       return Array.from(new Set([...current, ...visibleIds]));
     });
+  }
+
+  function editProblemFromRow(event: MouseEvent<HTMLButtonElement>, problemId: number) {
+    event.preventDefault();
+    event.stopPropagation();
+    onEditProblem(problemId);
+  }
+
+  function deleteProblemFromRow(event: MouseEvent<HTMLButtonElement>, problemId: number) {
+    event.preventDefault();
+    event.stopPropagation();
+    onDeleteProblems([problemId]);
   }
 
   return (
@@ -4515,10 +4637,15 @@ function ProblemListView(props: {
               </td>
               {userRole === "teacher" && (
                 <td className="problem-row-actions" onClick={(event) => event.stopPropagation()}>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => onEditProblem(p.id)}>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={(event) => editProblemFromRow(event, p.id)}>
                     수정
                   </button>
-                  <button type="button" className="btn btn-ghost btn-sm btn-danger" onClick={() => onDeleteProblems([p.id])}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm btn-danger"
+                    onClick={(event) => deleteProblemFromRow(event, p.id)}
+                    aria-label={`${p.title} 삭제`}
+                  >
                     삭제
                   </button>
                 </td>
@@ -4938,8 +5065,8 @@ function StudentMoveModal({
 }) {
   const teacherOptions = teachers.length > 0 ? teachers : [currentUser];
   const initialTeacherId =
-    student.created_by_teacher_id && teacherOptions.some((teacher) => teacher.id === student.created_by_teacher_id)
-      ? student.created_by_teacher_id
+    student.primary_teacher_id && teacherOptions.some((teacher) => teacher.id === student.primary_teacher_id)
+      ? student.primary_teacher_id
       : teacherOptions[0]?.id ?? currentUser.id;
   const [draft, setDraft] = useState<StudentMoveDraft>({
     teacher_id: initialTeacherId,
@@ -4983,7 +5110,7 @@ function StudentMoveModal({
           <input
             value={draft.class_name}
             onChange={(event) => setDraft((current) => ({ ...current, class_name: event.target.value }))}
-            placeholder="예: 토11시 / 금2시"
+            placeholder="예: 토11시 / 금2시 (띄어쓰기 주의)"
             autoFocus
           />
         </label>

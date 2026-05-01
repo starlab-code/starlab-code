@@ -18,7 +18,9 @@ def seed_demo_users(session: Session, primary_teacher: "User") -> None:  # type:
     from ..models import User, UserRole
 
     config_path = pathlib.Path(__file__).parent.parent / "seed_config.json"
-    demo_users: list[dict] = json.loads(config_path.read_text(encoding="utf-8"))["demo_users"]
+    if not config_path.exists():
+        return
+    demo_users: list[dict] = json.loads(config_path.read_text(encoding="utf-8")).get("demo_users", [])
 
     # seed_config의 id → username 매핑 (primary teacher는 config id=1)
     config_id_to_username: dict[int, str] = {1: primary_teacher.username}
