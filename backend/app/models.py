@@ -94,9 +94,9 @@ class TestCase(SQLModel, table=True):
 class Assignment(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str
-    problem_id: int = Field(foreign_key="problem.id")
-    teacher_id: int = Field(foreign_key="user.id")
-    student_id: int = Field(foreign_key="user.id")
+    problem_id: int = Field(foreign_key="problem.id", index=True)
+    teacher_id: int = Field(foreign_key="user.id", index=True)
+    student_id: int = Field(foreign_key="user.id", index=True)
     assignment_type: AssignmentType
     due_at: Optional[datetime] = None
     classroom_label: Optional[str] = None
@@ -105,9 +105,9 @@ class Assignment(SQLModel, table=True):
 
 class Submission(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    problem_id: int = Field(foreign_key="problem.id")
-    user_id: int = Field(foreign_key="user.id")
-    assignment_id: Optional[int] = Field(default=None, foreign_key="assignment.id")
+    problem_id: int = Field(foreign_key="problem.id", index=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    assignment_id: Optional[int] = Field(default=None, foreign_key="assignment.id", index=True)
     language: str = "python"
     code: str
     status: SubmissionStatus

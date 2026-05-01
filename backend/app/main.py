@@ -404,7 +404,11 @@ def leaderboard(
     submissions = session.exec(
         select(Submission).where(Submission.user_id.in_(student_ids))
     ).all()
-    problems = {problem.id: problem for problem in session.exec(select(Problem)).all()}
+    problem_ids_used = {sub.problem_id for sub in submissions}
+    problems = (
+        {p.id: p for p in session.exec(select(Problem).where(Problem.id.in_(problem_ids_used))).all()}
+        if problem_ids_used else {}
+    )
 
     score_per_difficulty = {
         DifficultyLevel.beginner: 1,
