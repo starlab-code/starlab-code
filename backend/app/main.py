@@ -801,39 +801,44 @@ def list_submissions(
 
 @app.get("/submissions/feed", response_model=List[SubmissionFeedItem])
 def submission_feed(
-    limit: int = Query(default=40, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=100),
     since_id: Optional[int] = Query(default=None),
     current_user: User = Depends(auth.require_teacher),
     session: Session = Depends(get_session),
 ):
-    teacher_student_ids = [student.id for student in list_students_for_teacher(session, current_user)]
-    if not teacher_student_ids:
-        return []
-    statement = select(Submission)
+    statement = (
+        select(Submission, User, Problem)
+        .join(User, Submission.user_id == User.id)
+        .join(Problem, Submission.problem_id == Problem.id)
+    )
+    if current_user.is_primary_teacher:
+        org_teacher_ids = [t.id for t in list_teachers_in_org(session, current_user)]
+        org_teacher_ids.append(current_user.id)
+        statement = statement.where(User.primary_teacher_id.in_(org_teacher_ids))
+    else:
+        statement = statement.where(User.primary_teacher_id == current_user.id)
     if since_id is not None:
         statement = statement.where(Submission.id > since_id)
-    statement = statement.where(Submission.user_id.in_(teacher_student_ids))
-    submissions = session.exec(statement.order_by(Submission.created_at.desc()).limit(limit)).all()
-    if not submissions:
+
+    rows = session.exec(
+        statement.order_by(Submission.created_at.desc()).limit(limit)
+    ).all()
+    if not rows:
         return []
 
-    user_ids = {sub.user_id for sub in submissions}
-    problem_ids = {sub.problem_id for sub in submissions}
-    assignment_ids = {sub.assignment_id for sub in submissions if sub.assignment_id is not None}
-
-    users = {u.id: u for u in session.exec(select(User).where(User.id.in_(user_ids))).all()}
-    problems = {p.id: p for p in session.exec(select(Problem).where(Problem.id.in_(problem_ids))).all()}
-    categories = category_lookup(session)
-    assignments_map = {}
+    assignment_ids = {sub.assignment_id for sub, _user, _problem in rows if sub.assignment_id is not None}
+    assignments_map: Dict[int, Assignment] = {}
     if assignment_ids:
         assignments_map = {
-            a.id: a for a in session.exec(select(Assignment).where(Assignment.id.in_(assignment_ids))).all()
+            a.id: a
+            for a in session.exec(
+                select(Assignment).where(Assignment.id.in_(assignment_ids))
+            ).all()
         }
+    categories = category_lookup(session)
 
     feed: List[SubmissionFeedItem] = []
-    for sub in submissions:
-        student = users.get(sub.user_id)
-        problem = problems.get(sub.problem_id)
+    for sub, student, problem in rows:
         category = categories.get(problem.category_id) if problem else None
         assignment = assignments_map.get(sub.assignment_id) if sub.assignment_id else None
         feed.append(

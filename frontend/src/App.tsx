@@ -1663,7 +1663,7 @@ export default function App() {
       if (profile.role === "teacher") {
         calls.push(request<UserProfile[]>("/teachers", {}, nextToken));
         calls.push(request<UserProfile[]>("/students", {}, nextToken));
-        calls.push(request<SubmissionFeedItem[]>("/submissions/feed?limit=60", {}, nextToken));
+        calls.push(request<SubmissionFeedItem[]>("/submissions/feed?limit=50", {}, nextToken));
         calls.push(request<AssignmentGroup[]>("/assignments/groups", {}, nextToken));
       }
       const leaderboardCallIndex = calls.length;
@@ -1867,7 +1867,7 @@ export default function App() {
     const intervalId = window.setInterval(async () => {
       try {
         const sinceId = lastFeedIdRef.current;
-        const path = sinceId > 0 ? `/submissions/feed?since_id=${sinceId}` : "/submissions/feed?limit=60";
+        const path = sinceId > 0 ? `/submissions/feed?since_id=${sinceId}` : "/submissions/feed?limit=50";
         const fresh = await request<SubmissionFeedItem[]>(path, {}, token);
         if (fresh.length === 0) return;
         const maxId = fresh.reduce((max, f) => (f.id > max ? f.id : max), sinceId);
@@ -1888,7 +1888,7 @@ export default function App() {
       } catch {
         /* swallow polling errors */
       }
-    }, 4000);
+    }, 10000);
     return () => window.clearInterval(intervalId);
   }, [token, user, feedPaused, isPreviewMode]);
 

@@ -16,9 +16,14 @@ if _is_sqlite:
     _engine_kwargs["max_overflow"] = 30
 else:
     # Keep the free-tier connection footprint small for Render + Supabase.
+    # Small pool + short timeout fail fast instead of piling up 30s waits.
     _engine_kwargs["pool_size"] = settings.db_pool_size
     _engine_kwargs["max_overflow"] = settings.db_max_overflow
+    _engine_kwargs["pool_timeout"] = settings.db_pool_timeout_seconds
     _engine_kwargs["pool_recycle"] = settings.db_pool_recycle_seconds
+    # Disable psycopg3 server-side prepared statements; required for
+    # Supabase's transaction pooler (avoids "prepared statement already exists").
+    _connect_args["prepare_threshold"] = None
 
 engine = create_engine(DATABASE_URL, connect_args=_connect_args, **_engine_kwargs)
 

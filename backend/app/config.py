@@ -106,13 +106,16 @@ class Settings:
         default_factory=lambda: _get_bool("STARLAB_SEED_DEMO_DATA", True)
     )
     db_pool_size: int = field(
-        default_factory=lambda: _get_int("STARLAB_DB_POOL_SIZE", 5)
+        default_factory=lambda: _get_int("STARLAB_DB_POOL_SIZE", 3)
     )
     db_max_overflow: int = field(
-        default_factory=lambda: _get_int("STARLAB_DB_MAX_OVERFLOW", 5)
+        default_factory=lambda: _get_int("STARLAB_DB_MAX_OVERFLOW", 2)
+    )
+    db_pool_timeout_seconds: int = field(
+        default_factory=lambda: _get_int("STARLAB_DB_POOL_TIMEOUT_SECONDS", 5)
     )
     db_pool_recycle_seconds: int = field(
-        default_factory=lambda: _get_int("STARLAB_DB_POOL_RECYCLE_SECONDS", 300)
+        default_factory=lambda: _get_int("STARLAB_DB_POOL_RECYCLE_SECONDS", 1800)
     )
     threadpool_size: int = field(
         default_factory=lambda: _get_int("STARLAB_THREADPOOL_SIZE", 64)
