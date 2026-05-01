@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 from fastapi import Depends, FastAPI, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func, or_, update, delete as sa_delete
 from sqlmodel import Session, select
 
 from . import auth, judge
@@ -334,40 +335,45 @@ def list_assignments_for_user(session: Session, current_user: User) -> List[Assi
 
 
 @app.get("/dashboard", response_model=DashboardSummary)
-def dashboard(current_user: User = Depends(auth.get_current_user), session: Session = Depends(get_session)):
-    total_problems = len(session.exec(select(Problem)).all())
+def dashboard(
+    current_user: User = Depends(auth.get_current_user),
+    session: Session = Depends(get_session),
+    _cached_students: Optional[List[User]] = None,
+):
+    total_problems = session.exec(select(func.count(Problem.id))).one()
     categories = session.exec(select(Category)).all()
 
     if current_user.role == UserRole.teacher:
-        assignments = session.exec(select(Assignment).where(Assignment.teacher_id == current_user.id)).all()
-        student_ids = [student.id for student in list_students_for_teacher(session, current_user)]
-        accepted = (
-            session.exec(
-                select(Submission).where(
-                    Submission.status == SubmissionStatus.accepted,
-                    Submission.user_id.in_(student_ids),
-                )
-            ).all()
-            if student_ids
-            else []
-        )
+        students = _cached_students if _cached_students is not None else list_students_for_teacher(session, current_user)
+        student_ids = [s.id for s in students]
+        assigned_count = session.exec(
+            select(func.count(Assignment.id)).where(Assignment.teacher_id == current_user.id)
+        ).one()
+        accepted_count = session.exec(
+            select(func.count(Submission.id)).where(
+                Submission.status == SubmissionStatus.accepted,
+                Submission.user_id.in_(student_ids),
+            )
+        ).one() if student_ids else 0
         return DashboardSummary(
-            assigned_count=len(assignments),
-            completed_count=len(accepted),
+            assigned_count=assigned_count,
+            completed_count=accepted_count,
             total_problems=total_problems,
             categories=categories,
         )
 
-    assignments = session.exec(select(Assignment).where(Assignment.student_id == current_user.id)).all()
-    accepted = session.exec(
-        select(Submission).where(
+    assigned_count = session.exec(
+        select(func.count(Assignment.id)).where(Assignment.student_id == current_user.id)
+    ).one()
+    accepted_count = session.exec(
+        select(func.count(Submission.id)).where(
             Submission.user_id == current_user.id,
             Submission.status == SubmissionStatus.accepted,
         )
-    ).all()
+    ).one()
     return DashboardSummary(
-        assigned_count=len(assignments),
-        completed_count=len(accepted),
+        assigned_count=assigned_count,
+        completed_count=accepted_count,
         total_problems=total_problems,
         categories=categories,
     )
@@ -587,14 +593,11 @@ def create_student_account(
 
 def _delete_student_records(session: Session, student: User) -> None:
     assignments = session.exec(select(Assignment).where(Assignment.student_id == student.id)).all()
-    assignment_ids = [assignment.id for assignment in assignments]
-    submissions = session.exec(select(Submission).where(Submission.user_id == student.id)).all()
+    assignment_ids = [a.id for a in assignments]
+    cond = or_(Submission.user_id == student.id)
     if assignment_ids:
-        assignment_submissions = session.exec(
-            select(Submission).where(Submission.assignment_id.in_(assignment_ids))
-        ).all()
-        seen = {submission.id for submission in submissions}
-        submissions.extend([submission for submission in assignment_submissions if submission.id not in seen])
+        cond = or_(Submission.user_id == student.id, Submission.assignment_id.in_(assignment_ids))
+    submissions = session.exec(select(Submission).where(cond)).all()
     for submission in submissions:
         session.delete(submission)
     for assignment in assignments:
@@ -641,26 +644,28 @@ def delete_teacher_account(
     if teacher.is_primary_teacher or get_primary_teacher_id(teacher) != current_user.id:
         raise HTTPException(status_code=403, detail="Cannot delete this teacher")
 
-    students = session.exec(select(User).where(User.created_by_teacher_id == teacher.id)).all()
-    for student in students:
-        student.created_by_teacher_id = current_user.id
-        student.primary_teacher_id = current_user.id
-        session.add(student)
+    session.exec(
+        update(User)
+        .where(User.created_by_teacher_id == teacher.id)
+        .values(created_by_teacher_id=current_user.id, primary_teacher_id=current_user.id)
+    )
 
-    assignments = session.exec(select(Assignment).where(Assignment.teacher_id == teacher.id)).all()
-    assignment_ids = [assignment.id for assignment in assignments]
+    assignment_ids = [a.id for a in session.exec(
+        select(Assignment.id).where(Assignment.teacher_id == teacher.id)
+    ).all()]
     if assignment_ids:
-        submissions = session.exec(select(Submission).where(Submission.assignment_id.in_(assignment_ids))).all()
-        for submission in submissions:
-            submission.assignment_id = None
-            session.add(submission)
-    for assignment in assignments:
-        session.delete(assignment)
+        session.exec(
+            update(Submission)
+            .where(Submission.assignment_id.in_(assignment_ids))
+            .values(assignment_id=None)
+        )
+    session.exec(sa_delete(Assignment).where(Assignment.teacher_id == teacher.id))
 
-    problems = session.exec(select(Problem).where(Problem.created_by == teacher.id)).all()
-    for problem in problems:
-        problem.created_by = current_user.id
-        session.add(problem)
+    session.exec(
+        update(Problem)
+        .where(Problem.created_by == teacher.id)
+        .values(created_by=current_user.id)
+    )
 
     session.delete(teacher)
     session.commit()
@@ -820,12 +825,14 @@ def list_submissions(
     problem_id: Optional[int] = Query(default=None),
     current_user: User = Depends(auth.get_current_user),
     session: Session = Depends(get_session),
+    _cached_student_ids: Optional[List[int]] = None,
 ):
     statement = select(Submission)
     if current_user.role == UserRole.student:
         statement = statement.where(Submission.user_id == current_user.id)
     else:
-        teacher_student_ids = [student.id for student in list_students_for_teacher(session, current_user)]
+        teacher_student_ids = _cached_student_ids if _cached_student_ids is not None \
+            else [s.id for s in list_students_for_teacher(session, current_user)]
         if not teacher_student_ids:
             return []
         statement = statement.where(Submission.user_id.in_(teacher_student_ids))
@@ -841,22 +848,24 @@ def bootstrap(
     session: Session = Depends(get_session),
 ):
     teachers: List[UserRead] = []
-    students: List[UserRead] = []
+    student_objects: List[User] = []
+    student_ids: List[int] = []
     assignment_groups: List[AssignmentGroup] = []
     if current_user.role == UserRole.teacher:
-        teachers = [to_user_read(teacher) for teacher in list_teachers_in_org(session, current_user)]
-        students = [to_user_read(student) for student in list_students_for_teacher(session, current_user)]
+        teachers = [to_user_read(t) for t in list_teachers_in_org(session, current_user)]
+        student_objects = list_students_for_teacher(session, current_user)
+        student_ids = [s.id for s in student_objects]
         assignment_groups = list_assignment_groups(current_user=current_user, session=session)
 
     return BootstrapResponse(
         user=to_user_read(current_user),
-        dashboard=dashboard(current_user=current_user, session=session),
+        dashboard=dashboard(current_user=current_user, session=session, _cached_students=student_objects),
         categories=list_categories(session=session),
         problems=list_problems(session=session),
         assignments=list_assignments_for_user(session, current_user),
-        submissions=list_submissions(current_user=current_user, session=session),
+        submissions=list_submissions(current_user=current_user, session=session, _cached_student_ids=student_ids),
         teachers=teachers,
-        students=students,
+        students=[to_user_read(s) for s in student_objects],
         assignment_groups=assignment_groups,
         leaderboard=leaderboard(current_user=current_user, session=session),
     )
@@ -1073,9 +1082,9 @@ def submission_job_queue_position(session: Session, job: SubmissionJob) -> int:
         return 0
     if job.status != SubmissionJobStatus.queued or job.id is None:
         return 0
-    running_count = len(session.exec(
-        select(SubmissionJob.id).where(SubmissionJob.status == SubmissionJobStatus.running)
-    ).all())
+    running_count = session.exec(
+        select(func.count(SubmissionJob.id)).where(SubmissionJob.status == SubmissionJobStatus.running)
+    ).one()
     queued_ids = session.exec(
         select(SubmissionJob.id)
         .where(SubmissionJob.status == SubmissionJobStatus.queued)

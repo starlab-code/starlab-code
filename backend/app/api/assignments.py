@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from .. import auth
@@ -95,10 +96,10 @@ def build_assignment_reads(session: Session, assignments: List[Assignment]) -> L
     students = {user.id: user for user in session.exec(select(User).where(User.id.in_(student_ids))).all()}
     teachers = {user.id: user for user in session.exec(select(User).where(User.id.in_(teacher_ids))).all()}
 
-    submission_pairs = {
-        (submission.assignment_id, submission.user_id)
-        for submission in session.exec(select(Submission).where(Submission.assignment_id.in_([assignment.id for assignment in assignments]))).all()
-    }
+    submission_pairs = set(session.exec(
+        select(Submission.assignment_id, Submission.user_id)
+        .where(Submission.assignment_id.in_([a.id for a in assignments]))
+    ).all())
 
     response: List[AssignmentRead] = []
     for assignment in assignments:
@@ -162,9 +163,12 @@ def create_assignments(
         if not target_student_ids:
             raise HTTPException(status_code=400, detail="수강반을 선택하거나 수강생을 직접 지정해 주세요.")
 
+    students_map = {u.id: u for u in session.exec(
+        select(User).where(User.id.in_(target_student_ids))
+    ).all()}
     created_assignments: List[Assignment] = []
     for student_id in target_student_ids:
-        student = session.get(User, student_id)
+        student = students_map.get(student_id)
         if (
             not student
             or student.role != UserRole.student
@@ -287,15 +291,13 @@ def list_assignment_groups(
     students = {u.id: u for u in session.exec(select(User).where(User.id.in_(student_ids))).all()}
     categories = category_lookup(session)
 
-    accepted_pairs = {
-        (sub.assignment_id, sub.user_id)
-        for sub in session.exec(
-            select(Submission).where(
-                Submission.assignment_id.in_([a.id for a in assignments]),
-                Submission.status == SubmissionStatus.accepted,
-            )
-        ).all()
-    }
+    accepted_pairs = set(session.exec(
+        select(Submission.assignment_id, Submission.user_id)
+        .where(
+            Submission.assignment_id.in_([a.id for a in assignments]),
+            Submission.status == SubmissionStatus.accepted,
+        )
+    ).all())
 
     groups: Dict[str, dict] = {}
     for assignment in assignments:

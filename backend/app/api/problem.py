@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlmodel import Session, delete, select
 
 from .. import auth
@@ -76,9 +77,9 @@ def create_testcase(
         raise HTTPException(status_code=400, detail="input_data 또는 expected_output 중 하나 이상은 필수입니다.")
 
     # 추가 후 최대 개수(50개) 초과 여부 확인
-    current_count = len(
-        session.exec(select(TestCase).where(TestCase.problem_id == problem_id)).all()
-    )
+    current_count = session.exec(
+        select(func.count(TestCase.id)).where(TestCase.problem_id == problem_id)
+    ).one()
     if current_count + 1 > MAX_TESTCASE_COUNT:
         raise HTTPException(
             status_code=400,
@@ -161,9 +162,9 @@ def delete_testcase(
         raise HTTPException(status_code=400, detail="해당 테스트케이스는 요청한 문제에 속하지 않습니다.")
 
     # 삭제 후 최소 개수(10개) 미만이 되는지 확인
-    current_count = len(
-        session.exec(select(TestCase).where(TestCase.problem_id == problem_id)).all()
-    )
+    current_count = session.exec(
+        select(func.count(TestCase.id)).where(TestCase.problem_id == problem_id)
+    ).one()
     if current_count - 1 < MIN_TESTCASE_COUNT:
         raise HTTPException(
             status_code=400,
