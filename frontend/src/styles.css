@@ -1300,6 +1300,51 @@ h3 { font-size: 0.95rem; font-weight: 700; }
 .toast-error { background: var(--bad-soft); color: var(--bad); border-color: rgba(194, 54, 43, 0.25); }
 .toast-info { background: var(--accent-soft); color: var(--accent-strong); border-color: rgba(239, 27, 45, 0.25); }
 
+/* ========== App floating toast ========== */
+.app-toast {
+  position: fixed;
+  bottom: 1.75rem;
+  right: 1.75rem;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.75rem 1rem 0.75rem 1.1rem;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.28);
+  max-width: 360px;
+  animation: app-toast-in 0.2s ease;
+}
+.app-toast-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+  border: 1px solid rgba(0, 138, 62, 0.3);
+}
+.app-toast-error {
+  background: var(--bad-soft);
+  color: var(--bad);
+  border: 1px solid rgba(194, 54, 43, 0.3);
+}
+.app-toast span { flex: 1; line-height: 1.4; }
+.app-toast button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.55;
+  font-size: 13px;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.app-toast button:hover { opacity: 1; }
+@keyframes app-toast-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ========== Home grid ========== */
 .home-grid {
   display: grid;
