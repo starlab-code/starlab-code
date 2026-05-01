@@ -2080,11 +2080,30 @@ export default function App() {
     const names = picked.slice(0, 3).map((problem) => problem.title).join(", ");
     setConfirmDialog({
       title: "문제 삭제",
-      body: `${names ? `${names}${count > 3 ? " 외" : ""} ` : ""}${count}개 문제를 삭제할까요?`,
+      body: `${names ? `${names}${count > 3 ? " 외" : ""} ` : ""}${count}개 문제를 삭제할까요? 연관된 과제와 제출 기록도 함께 삭제됩니다.`,
       confirmLabel: "삭제",
       tone: "danger",
-      onConfirm: () => {
-        setMessage(`${count}개 문제 삭제 UI를 확인했습니다.`);
+      onConfirm: async () => {
+        if (!token) return;
+        setError(null);
+        if (isPreviewMode) {
+          setMessage("UI 미리보기에서는 문제 삭제가 실행되지 않습니다.");
+          return;
+        }
+        try {
+          await Promise.all(
+            problemIds.map((id) => request<{ ok: boolean }>(`/problems/${id}`, { method: "DELETE" }, token)),
+          );
+          setMessage(`${count}개 문제를 삭제했습니다.`);
+          if (selectedProblemId && problemIds.includes(selectedProblemId)) {
+            setSelectedProblemId(null);
+            setSelectedProblem(null);
+            navigate("problems");
+          }
+          await loadAppData(token, user ?? undefined);
+        } catch (caught) {
+          setError(caught instanceof Error ? caught.message : "문제 삭제에 실패했습니다.");
+        }
       },
     });
   }
@@ -3778,6 +3797,7 @@ function TeacherHomeRedesign(props: {
     onGoAssignments,
     onGoManage,
   } = props;
+  const myStudents = students.filter((s) => s.role === "student" && s.primary_teacher_id === user.id);
   const studentMap = new Map(students.map((s) => [s.id, s]));
   const pendingAssignments = assignments.filter((a) => !a.submitted).length;
   const assignmentGroups = Array.from(
@@ -3837,7 +3857,7 @@ function TeacherHomeRedesign(props: {
             <div className="th-header-title">{user.display_name} 선생님의 오늘도 순항 중입니다</div>
             <div className="th-header-sub">
               오늘 <strong>{metrics?.todayActiveStudents ?? 0}명</strong>이 활동 중이고 총 학생{" "}
-              <strong>{students.length}명</strong>, 배정 과제는 <strong>{dashboard?.assigned_count ?? 0}건</strong>입니다.
+              <strong>{myStudents.length}명</strong>, 배정 과제는 <strong>{dashboard?.assigned_count ?? 0}건</strong>입니다.
             </div>
           </div>
         </div>
@@ -3878,14 +3898,14 @@ function TeacherHomeRedesign(props: {
           <div className="metric-label">활동 학생</div>
           <div className="metric-val">
             {metrics?.todayActiveStudents ?? 0}
-            <span className="metric-sub">/ {students.length}</span>
+            <span className="metric-sub">/ {myStudents.length}</span>
           </div>
           <div className="metric-hint">최근 7일 상위 활동 학생 {metrics?.topStudents.length ?? 0}명</div>
           <div className="metric-bar">
             <div
               className="metric-bar-fill metric-bar-accent"
               style={{
-                width: `${students.length === 0 ? 0 : Math.round(((metrics?.todayActiveStudents ?? 0) / students.length) * 100)}%`,
+                width: `${myStudents.length === 0 ? 0 : Math.round(((metrics?.todayActiveStudents ?? 0) / myStudents.length) * 100)}%`,
               }}
             />
           </div>

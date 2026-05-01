@@ -3,13 +3,50 @@ from sqlmodel import Session, select
 
 from .. import auth
 from ..db import get_session
-from ..models import Problem, TestCase, TestCaseCreate, TestCaseRead, TestCaseUpdate, User
+from ..models import Assignment, Problem, Submission, TestCase, TestCaseCreate, TestCaseRead, TestCaseUpdate, User
 
 MIN_TESTCASE_COUNT = 10
 MAX_TESTCASE_COUNT = 50
 
 router = APIRouter(prefix="/problems", tags=["problems"])
 
+
+
+#==============================================
+# 문제 삭제
+#==============================================
+
+@router.delete("/{problem_id}")
+def delete_problem(
+    problem_id: int,
+    current_user: User = Depends(auth.require_teacher),
+    session: Session = Depends(get_session),
+):
+    del current_user
+
+    problem = session.get(Problem, problem_id)
+    if not problem:
+        raise HTTPException(status_code=404, detail="문제를 찾을 수 없습니다.")
+
+    # 이 문제에 연결된 제출 기록 삭제 (assignment FK 참조가 있으므로 먼저)
+    submissions = session.exec(select(Submission).where(Submission.problem_id == problem_id)).all()
+    for submission in submissions:
+        session.delete(submission)
+
+    # 이 문제에 연결된 과제 삭제
+    assignments = session.exec(select(Assignment).where(Assignment.problem_id == problem_id)).all()
+    for assignment in assignments:
+        session.delete(assignment)
+
+    # 테스트케이스 삭제
+    testcases = session.exec(select(TestCase).where(TestCase.problem_id == problem_id)).all()
+    for testcase in testcases:
+        session.delete(testcase)
+
+    session.delete(problem)
+    session.commit()
+
+    return {"ok": True}
 
 
 #==============================================
