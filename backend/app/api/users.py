@@ -49,11 +49,6 @@ def update_student(
     if not student or student.role != UserRole.student:
         raise HTTPException(status_code=404, detail="해당 학생을 찾을 수 없습니다.")
 
-    # 같은 조직의 학생인지 확인
-    current_user_org = _get_primary_teacher_id(current_user)
-    if student.primary_teacher_id != current_user_org:
-        raise HTTPException(status_code=403, detail="다른 조직의 학생은 수정할 수 없습니다.")
-
     # 반이동 권한: 메인 선생님, 해당 학생을 등록한 선생님, 담당 선생님만 가능
     can_transfer = (
         current_user.is_primary_teacher

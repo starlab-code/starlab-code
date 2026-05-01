@@ -2123,13 +2123,44 @@ export default function App() {
   }
 
   async function handleMoveStudent(studentId: number, teacherId: number, className: string) {
+    if (!token || !user || user.role !== "teacher") return;
     const student = students.find((item) => item.id === studentId);
     const teacher = teachers.find((item) => item.id === teacherId) ?? (user?.id === teacherId ? user : null);
-    setError(null);
-    setMessage(
-      `${student?.display_name ?? "선택한 학생"} 반 이동 입력을 확인했습니다. ` +
-        `담당 선생님: ${teacher?.display_name ?? "선택한 선생님"}, 반: ${className}`,
-    );
+    setConfirmDialog({
+      title: "반 이동",
+      body:
+        `${student?.display_name ?? "선택한 학생"}을(를) ` +
+        `${teacher?.display_name ?? "선택한 선생님"} / ${className} 반으로 이동할까요?`,
+      confirmLabel: "이동",
+      tone: "default",
+      onConfirm: async () => {
+        setError(null);
+        setMessage(null);
+        if (isPreviewMode) {
+          setMessage(
+            `${student?.display_name ?? "선택한 학생"} 반 이동 UI를 확인했습니다. ` +
+              `담당 선생님: ${teacher?.display_name ?? "선택한 선생님"}, 반: ${className}`,
+          );
+          return;
+        }
+        try {
+          await request<UserProfile>(
+            `/users/students/${studentId}`,
+            {
+              method: "PATCH",
+              body: JSON.stringify({ primary_teacher_id: teacherId, class_name: className }),
+            },
+            token,
+          );
+          setMessage(
+            `${student?.display_name ?? "학생"}을(를) ${teacher?.display_name ?? "선택한 선생님"} / ${className} 반으로 이동했습니다.`,
+          );
+          await loadAppData(token, user);
+        } catch (caught) {
+          setError(caught instanceof Error ? caught.message : "반 이동에 실패했습니다.");
+        }
+      },
+    });
   }
 
   function handleDeleteProblems(problemIds: number[]) {
@@ -4894,13 +4925,15 @@ function AccountsView(props: {
   const studentsByClass = useMemo(() => {
     const map = new Map<string, UserProfile[]>();
     for (const student of students) {
+      if (student.role !== "student") continue;
+      if (student.primary_teacher_id !== user.id) continue;
       const key = (student.class_name ?? "").trim() || "반 미지정";
       const bucket = map.get(key) ?? [];
       bucket.push(student);
       map.set(key, bucket);
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [students]);
+  }, [students, user.id]);
 
   return (
     <div className="page-stack list-page">
@@ -4918,7 +4951,7 @@ function AccountsView(props: {
           </span>
           <span className="summary-pill">
             <span className="muted small">내 학생</span>
-            <strong>{students.length}</strong>
+            <strong>{studentsByClass.reduce((sum, [, list]) => sum + list.length, 0)}</strong>
           </span>
         </div>
       </header>
@@ -4936,7 +4969,7 @@ function AccountsView(props: {
           className={activeTab === "student" ? "auth-role-tab auth-role-tab-active" : "auth-role-tab"}
           onClick={() => setActiveTab("student")}
         >
-          학생 계정 ({students.length})
+          학생 계정 ({studentsByClass.reduce((sum, [, list]) => sum + list.length, 0)})
         </button>
       </div>
 
@@ -5115,10 +5148,9 @@ function AccountsView(props: {
           <div className="account-list-card">
             <div className="account-card-head">
               <h3>반별 학생 목록</h3>
-              <span className="muted small">내가 만든 학생만 보입니다.</span>
             </div>
-            {students.length === 0 ? (
-              <p className="empty-inline">아직 만든 학생이 없습니다.</p>
+            {studentsByClass.length === 0 ? (
+              <p className="empty-inline">아직 등록된 학생이 없습니다.</p>
             ) : (
               <div className="account-class-stack">
                 {studentsByClass.map(([className, list]) => (
