@@ -1833,6 +1833,18 @@ export default function App() {
   }, [appTheme]);
 
   useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(() => setMessage(null), 3500);
+    return () => clearTimeout(t);
+  }, [message]);
+
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(null), 4500);
+    return () => clearTimeout(t);
+  }, [error]);
+
+  useEffect(() => {
     if (!profileMenuOpen) return;
 
     function closeOnOutsideClick(event: PointerEvent) {
@@ -2032,6 +2044,7 @@ export default function App() {
       memory_limit_mb: problem.memory_limit_mb,
       testcases:
         problem.all_testcases?.map((tc) => ({
+          id: tc.id,
           input_data: tc.input_data,
           expected_output: tc.expected_output,
           is_public: tc.is_public,
@@ -2257,11 +2270,30 @@ export default function App() {
     const names = picked.slice(0, 3).map((problem) => problem.title).join(", ");
     setConfirmDialog({
       title: "문제 삭제",
-      body: `${names ? `${names}${count > 3 ? " 외" : ""} ` : ""}${count}개 문제를 삭제할까요?`,
+      body: `${names ? `${names}${count > 3 ? " 외" : ""} ` : ""}${count}개 문제를 삭제할까요? 연관된 과제와 제출 기록도 함께 삭제됩니다.`,
       confirmLabel: "삭제",
       tone: "danger",
-      onConfirm: () => {
-        setMessage(`${count}개 문제 삭제 UI를 확인했습니다.`);
+      onConfirm: async () => {
+        if (!token) return;
+        setError(null);
+        if (isPreviewMode) {
+          setMessage("UI 미리보기에서는 문제 삭제가 실행되지 않습니다.");
+          return;
+        }
+        try {
+          await Promise.all(
+            problemIds.map((id) => request<{ ok: boolean }>(`/problems/${id}`, { method: "DELETE" }, token)),
+          );
+          setMessage(`${count}개 문제를 삭제했습니다.`);
+          if (selectedProblemId && problemIds.includes(selectedProblemId)) {
+            setSelectedProblemId(null);
+            setSelectedProblem(null);
+            navigate("problems");
+          }
+          await loadAppData(token, user ?? undefined);
+        } catch (caught) {
+          setError(caught instanceof Error ? caught.message : "문제 삭제에 실패했습니다.");
+        }
       },
     });
   }
@@ -2444,16 +2476,84 @@ export default function App() {
       return;
     }
     try {
-      const payload = {
-        ...problemForm,
-        testcases: problemForm.testcases.filter((tc) => tc.input_data.trim() || tc.expected_output.trim()),
-      };
+      const filledTcs = problemForm.testcases.filter((tc) => tc.input_data.trim() || tc.expected_output.trim());
+      const payload = { ...problemForm, testcases: filledTcs };
+
       if (problemFormMode === "edit" && selectedProblemId) {
+        // 1. 문제 메타데이터만 PUT (testcases 제외 → 백엔드가 TC를 건드리지 않음)
+        const { testcases: _tcs, ...metaOnly } = payload;
         await request<ProblemDetail>(
           `/problems/${selectedProblemId}`,
-          { method: "PUT", body: JSON.stringify(payload) },
+          { method: "PUT", body: JSON.stringify(metaOnly) },
           token,
         );
+
+        // 2. TC delta 계산
+        const originalTcs = selectedProblem?.all_testcases ?? [];
+        const originalById = new Map(
+          originalTcs.filter((tc) => tc.id != null).map((tc) => [tc.id!, tc]),
+        );
+        const formIdSet = new Set(filledTcs.filter((tc) => tc.id != null).map((tc) => tc.id!));
+
+        const toDelete = [...originalById.keys()].filter((id) => !formIdSet.has(id));
+        const toPost = filledTcs.filter((tc) => tc.id == null);
+        const toPatch = filledTcs.filter((tc) => {
+          if (tc.id == null) return false;
+          const orig = originalById.get(tc.id);
+          if (!orig) return false;
+          return (
+            tc.input_data !== orig.input_data ||
+            tc.expected_output !== orig.expected_output ||
+            tc.is_public !== orig.is_public ||
+            tc.note !== orig.note
+          );
+        });
+
+        // 3. POST/DELETE 순서 결정: 중간 상태에서 10개 미만 or 50개 초과가 없도록 처리
+        //    POST-first: 현재 개수 + 새 TC ≤ 50 이면 안전
+        //    DELETE-first: 현재 개수 - 삭제 TC ≥ 10 이면 안전
+        //    둘 다 불가능하면 PUT으로 일괄 교체 (폴백)
+        const currentCount = originalTcs.length;
+        const postFirst = currentCount + toPost.length <= 50;
+        const deleteFirst = currentCount - toDelete.length >= 10;
+
+        if (!postFirst && !deleteFirst && (toPost.length > 0 || toDelete.length > 0)) {
+          // 폴백: TC 전체를 PUT으로 일괄 교체
+          await request<ProblemDetail>(
+            `/problems/${selectedProblemId}`,
+            { method: "PUT", body: JSON.stringify(payload) },
+            token,
+          );
+        } else {
+          const baseUrl = `/problems/${selectedProblemId}/testcases`;
+
+          const postAll = async () => {
+            for (const tc of toPost) {
+              const { id: _id, ...tcBody } = tc;
+              await request<TestCase>(baseUrl, { method: "POST", body: JSON.stringify(tcBody) }, token);
+            }
+          };
+          const deleteAll = async () => {
+            for (const id of toDelete) {
+              await request<{ ok: boolean }>(`${baseUrl}/${id}`, { method: "DELETE" }, token);
+            }
+          };
+
+          if (postFirst) {
+            await postAll();
+            await deleteAll();
+          } else {
+            await deleteAll();
+            await postAll();
+          }
+
+          // 수정된 기존 TC PATCH (순서 무관)
+          for (const tc of toPatch) {
+            const { id: tcId, ...tcBody } = tc;
+            await request<TestCase>(`${baseUrl}/${tcId}`, { method: "PATCH", body: JSON.stringify(tcBody) }, token);
+          }
+        }
+
         setMessage("문제를 수정했습니다.");
       } else {
         const created = await request<ProblemDetail>(
@@ -2969,6 +3069,12 @@ export default function App() {
       </main>
       {!isEditorWindow && <AppFooter user={user} healthState={healthState} apiBaseUrl={API_BASE_URL} />}
       {confirmDialog && <ConfirmDialogModal dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />}
+      {(message || error) && (
+        <div className={`app-toast app-toast-${error ? "error" : "ok"}`} role="status">
+          <span>{error ?? message}</span>
+          <button type="button" aria-label="닫기" onClick={() => { setError(null); setMessage(null); }}>✕</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -3970,6 +4076,7 @@ function TeacherHomeRedesign(props: {
     onGoAssignments,
     onGoManage,
   } = props;
+  const myStudents = students.filter((s) => s.role === "student" && s.primary_teacher_id === user.id);
   const studentMap = new Map(students.map((s) => [s.id, s]));
   const pendingAssignments = assignments.filter((a) => !a.submitted).length;
   const assignmentGroups = Array.from(
@@ -4029,7 +4136,7 @@ function TeacherHomeRedesign(props: {
             <div className="th-header-title">{user.display_name}, 안녕하세요</div>
             <div className="th-header-sub">
               오늘 <strong>{metrics?.todayActiveStudents ?? 0}명</strong>이 활동 중이고 총 학생{" "}
-              <strong>{students.length}명</strong>, 배정 과제는 <strong>{dashboard?.assigned_count ?? 0}건</strong>입니다.
+              <strong>{myStudents.length}명</strong>, 배정 과제는 <strong>{dashboard?.assigned_count ?? 0}건</strong>입니다.
             </div>
           </div>
         </div>
@@ -4070,14 +4177,14 @@ function TeacherHomeRedesign(props: {
           <div className="metric-label">활동 학생</div>
           <div className="metric-val">
             {metrics?.todayActiveStudents ?? 0}
-            <span className="metric-sub">/ {students.length}</span>
+            <span className="metric-sub">/ {myStudents.length}</span>
           </div>
           <div className="metric-hint">최근 7일 상위 활동 학생 {metrics?.topStudents.length ?? 0}명</div>
           <div className="metric-bar">
             <div
               className="metric-bar-fill metric-bar-accent"
               style={{
-                width: `${students.length === 0 ? 0 : Math.round(((metrics?.todayActiveStudents ?? 0) / students.length) * 100)}%`,
+                width: `${myStudents.length === 0 ? 0 : Math.round(((metrics?.todayActiveStudents ?? 0) / myStudents.length) * 100)}%`,
               }}
             />
           </div>
@@ -4926,8 +5033,8 @@ function StudentMoveModal({
 }) {
   const teacherOptions = teachers.length > 0 ? teachers : [currentUser];
   const initialTeacherId =
-    student.created_by_teacher_id && teacherOptions.some((teacher) => teacher.id === student.created_by_teacher_id)
-      ? student.created_by_teacher_id
+    student.primary_teacher_id && teacherOptions.some((teacher) => teacher.id === student.primary_teacher_id)
+      ? student.primary_teacher_id
       : teacherOptions[0]?.id ?? currentUser.id;
   const [draft, setDraft] = useState<StudentMoveDraft>({
     teacher_id: initialTeacherId,
@@ -5025,14 +5132,13 @@ function AccountsView(props: {
     const map = new Map<string, UserProfile[]>();
     for (const student of students) {
       if (student.role !== "student") continue;
-      if (student.primary_teacher_id !== user.id) continue;
       const key = (student.class_name ?? "").trim() || "반 미지정";
       const bucket = map.get(key) ?? [];
       bucket.push(student);
       map.set(key, bucket);
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [students, user.id]);
+  }, [students]);
 
   return (
     <div className="page-stack list-page">
