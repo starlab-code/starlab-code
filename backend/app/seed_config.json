@@ -1,0 +1,114 @@
+{
+    "demo_users": [
+      {
+        "id": 2,
+        "username": "teacher_a",
+        "display_name": "A반 선생님",
+        "role": "teacher",
+        "is_primary_teacher": false,
+        "primary_teacher_id": 1,
+        "created_by_teacher_id": null,
+        "class_name": null,
+        "password": "demo1234"
+      },
+      {
+        "id": 3,
+        "username": "teacher_b",
+        "display_name": "B반 선생님",
+        "role": "teacher",
+        "is_primary_teacher": false,
+        "primary_teacher_id": 1,
+        "created_by_teacher_id": null,
+        "class_name": null,
+        "password": "demo1234"
+      },
+      {
+        "id": 4,
+        "username": "teacher_c",
+        "display_name": "C반 선생님",
+        "role": "teacher",
+        "is_primary_teacher": false,
+        "primary_teacher_id": 1,
+        "created_by_teacher_id": null,
+        "class_name": null,
+        "password": "demo1234"
+      },
+      {
+        "id": 5,
+        "username": "student_a1",
+        "display_name": "A반 학생 1",
+        "role": "student",
+        "is_primary_teacher": false,
+        "primary_teacher_id": 2,
+        "created_by_teacher_id": 2,
+        "class_name": "A반",
+        "password": "demo1234"
+      },
+      {
+        "id": 6,
+        "username": "student_a2",
+        "display_name": "A반 학생 2",
+        "role": "student",
+        "is_primary_teacher": false,
+        "primary_teacher_id": 2,
+        "created_by_teacher_id": 2,
+        "class_name": "A반",
+        "password": "demo1234"
+      },
+      {
+        "id": 7,
+        "username": "student_b1",
+        "display_name": "B반 학생 1",
+        "role": "student",
+        "is_primary_teacher": false,
+        "primary_teacher_id": 3,
+        "created_by_teacher_id": 3,
+        "class_name": "B반",
+        "password": "demo1234"
+      },
+      {
+        "id": 8,
+        "username": "student_b2",
+        "display_name": "B반 학생 2",
+        "role": "student",
+        "is_primary_teacher": false,
+        "primary_teacher_id": 3,
+        "created_by_teacher_id": 3,
+        "class_name": "B반",
+        "password": "demo1234"
+      },
+      {
+        "id": 9,
+        "username": "student_c1",
+        "display_name": "C반 학생 1",
+        "role": "student",
+        "is_primary_teacher": false,
+        "primary_teacher_id": 4,
+        "created_by_teacher_id": 4,
+        "class_name": "C반",
+        "password": "demo1234"
+      },
+      {
+        "id": 11,
+        "username": "student_case1",
+        "display_name": "담당 이동 테스트 학생",
+        "role": "student",
+        "is_primary_teacher": false,
+        "primary_teacher_id": 2,
+        "created_by_teacher_id": 2,
+        "class_name": "A반",
+        "password": "demo1234"
+      },
+      {
+        "id": 12,
+        "username": "student_case2",
+        "display_name": "아이디 중복 테스트 학생",
+        "role": "student",
+        "is_primary_teacher": false,
+        "primary_teacher_id": 3,
+        "created_by_teacher_id": 3,
+        "class_name": "B반",
+        "password": "demo1234"
+      }
+    ]
+}
