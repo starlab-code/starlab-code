@@ -33,6 +33,83 @@ class TestResult:
 
 _judge_semaphore = threading.BoundedSemaphore(max(1, settings.judge_concurrency))
 
+# Harness script: runs inside the subprocess, handles all test cases for one submission.
+# Protocol documented in _run_python_harness_iter below.
+_PYTHON_HARNESS_CODE = r"""
+import sys
+import io
+import traceback
+
+
+def _read_n(stream, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = stream.read(n - len(buf))
+        if not chunk:
+            raise EOFError("unexpected EOF from judge")
+        buf += chunk
+    return buf
+
+
+def _exec_one(compiled, input_data):
+    import builtins as _builtins
+    fake_stdin = io.StringIO(input_data)
+    fake_stdout = io.StringIO()
+    fake_stderr = io.StringIO()
+    saved = (sys.stdin, sys.stdout, sys.stderr)
+    sys.stdin = fake_stdin
+    sys.stdout = fake_stdout
+    sys.stderr = fake_stderr
+    status = "ok"
+    try:
+        exec(compiled, {"__builtins__": _builtins, "__name__": "__main__"})
+    except SystemExit:
+        pass
+    except Exception:
+        status = "error"
+        sys.stderr.write(traceback.format_exc())
+    finally:
+        sys.stdin, sys.stdout, sys.stderr = saved
+    return fake_stdout.getvalue(), fake_stderr.getvalue(), status
+
+
+def main():
+    ri = sys.stdin.buffer
+    ro = sys.stdout.buffer
+
+    sol_path = ri.readline().decode("utf-8").strip()
+    with open(sol_path, encoding="utf-8") as f:
+        source = f.read()
+    compiled = compile(source, "<solution>", "exec")
+
+    while True:
+        cmd_line = ri.readline()
+        if not cmd_line:
+            break
+        cmd = cmd_line.decode("utf-8").strip()
+        if cmd == "DONE":
+            break
+        if cmd != "TEST":
+            continue
+
+        input_len = int(ri.readline())
+        input_data = _read_n(ri, input_len).decode("utf-8", errors="replace")
+
+        out_str, err_str, status = _exec_one(compiled, input_data)
+
+        out_bytes = out_str.encode("utf-8")
+        err_bytes = err_str.encode("utf-8")
+        ro.write(f"{len(out_bytes)}\n".encode())
+        ro.write(out_bytes)
+        ro.write(f"{len(err_bytes)}\n".encode())
+        ro.write(err_bytes)
+        ro.write(f"{status}\n".encode())
+        ro.flush()
+
+
+main()
+"""
+
 
 def _normalize_output(text: str) -> str:
     return "\n".join(line.rstrip() for line in text.strip().splitlines()).strip()
@@ -91,6 +168,32 @@ def _apply_posix_limits() -> None:
     os.setsid()
 
 
+def _apply_posix_limits_harness() -> None:
+    """POSIX limits for the harness process (multiple test cases).
+    RLIMIT_CPU is intentionally omitted — wall-clock timeout in the parent controls time."""
+    if resource is None:
+        return
+    mem = max(64 * 1024 * 1024, settings.judge_memory_bytes)
+    max_output = max(64 * 1024, settings.judge_max_output_bytes)
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
+    except (ValueError, OSError):
+        pass
+    try:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (max_output * 8, max_output * 8))
+    except (ValueError, OSError):
+        pass
+    try:
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    except (ValueError, OSError):
+        pass
+    try:
+        resource.setrlimit(resource.RLIMIT_NPROC, (64, 64))
+    except (ValueError, OSError, AttributeError):
+        pass
+    os.setsid()
+
+
 def _read_capped(stream, cap: int, on_overflow) -> bytes:
     buffer = bytearray()
     try:
@@ -114,7 +217,6 @@ def _read_capped(stream, cap: int, on_overflow) -> bytes:
 
 def _build_python_cmd(script_path: Path) -> List[str]:
     cmd = [_python_executable()]
-    # -I (isolated) implies -E, -s (and -P on 3.11+); -B skips .pyc. Safe on older versions too.
     cmd.extend(["-I", "-B", str(script_path)])
     return cmd
 
@@ -264,6 +366,180 @@ def _run_single(
     return returncode, stdout_text, stderr_text, runtime_ms, overflow["stdout"]
 
 
+def _read_harness_result(
+    proc: subprocess.Popen,
+    timeout: float,
+) -> Optional[Tuple[str, str, str]]:
+    """Read one (out_str, err_str, status_str) from the harness stdout.
+    Returns None on timeout, EOF, or parse error."""
+    result_holder: List[Optional[Tuple[str, str, str]]] = [None]
+    done_event = threading.Event()
+
+    def _reader() -> None:
+        try:
+            out_len_line = proc.stdout.readline()
+            if not out_len_line:
+                return
+            out_len = int(out_len_line)
+            out_bytes = b""
+            while len(out_bytes) < out_len:
+                chunk = proc.stdout.read(out_len - len(out_bytes))
+                if not chunk:
+                    return
+                out_bytes += chunk
+
+            err_len_line = proc.stdout.readline()
+            if not err_len_line:
+                return
+            err_len = int(err_len_line)
+            err_bytes = b""
+            while len(err_bytes) < err_len:
+                chunk = proc.stdout.read(err_len - len(err_bytes))
+                if not chunk:
+                    return
+                err_bytes += chunk
+
+            status_line = proc.stdout.readline()
+            if not status_line:
+                return
+            status = status_line.decode("utf-8", errors="replace").strip()
+
+            result_holder[0] = (
+                out_bytes.decode("utf-8", errors="replace"),
+                err_bytes.decode("utf-8", errors="replace"),
+                status,
+            )
+        except (ValueError, OSError):
+            pass
+        finally:
+            done_event.set()
+
+    t = threading.Thread(target=_reader, daemon=True)
+    t.start()
+    done_event.wait(timeout=timeout)
+    return result_holder[0]
+
+
+def _run_python_harness_iter(
+    code: str,
+    test_list: list,
+    timeout_per_test: float,
+) -> Iterator[TestResult]:
+    """Run all Python test cases in a single subprocess (harness), reusing the interpreter."""
+    with tempfile.TemporaryDirectory(prefix="starlab-code-") as temp_dir:
+        solution_path = Path(temp_dir) / "solution.py"
+        harness_path = Path(temp_dir) / "_harness.py"
+        solution_path.write_text(code, encoding="utf-8")
+        harness_path.write_text(_PYTHON_HARNESS_CODE, encoding="utf-8")
+
+        cmd = _build_python_cmd(harness_path)
+
+        popen_kwargs: dict = {
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "env": _subprocess_env(),
+        }
+        if sys.platform != "win32":
+            popen_kwargs["preexec_fn"] = _apply_posix_limits_harness
+            popen_kwargs["close_fds"] = True
+        else:
+            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+        proc: Optional[subprocess.Popen] = None
+
+        def _start_proc() -> subprocess.Popen:
+            p = subprocess.Popen(cmd, **popen_kwargs)
+            try:
+                p.stdin.write(f"{solution_path}\n".encode())
+                p.stdin.flush()
+            except OSError:
+                pass
+            return p
+
+        def _kill_proc(p: subprocess.Popen) -> None:
+            try:
+                p.kill()
+                p.wait(timeout=1.0)
+            except Exception:
+                pass
+
+        proc = _start_proc()
+
+        try:
+            for index, test in enumerate(test_list):
+                expected = test.get("expected", "") or ""
+                stdin_text = test.get("input", "") or ""
+
+                if len(stdin_text.encode("utf-8")) > settings.judge_max_input_bytes:
+                    yield TestResult(
+                        index=index,
+                        status="runtime_error",
+                        expected=expected,
+                        stderr="Test input exceeds the configured maximum size.",
+                    )
+                    continue
+
+                input_bytes = stdin_text.encode("utf-8")
+
+                with _judge_semaphore:
+                    try:
+                        proc.stdin.write(b"TEST\n")
+                        proc.stdin.write(f"{len(input_bytes)}\n".encode())
+                        proc.stdin.write(input_bytes)
+                        proc.stdin.flush()
+                    except OSError:
+                        yield TestResult(
+                            index=index,
+                            status="runtime_error",
+                            expected=expected,
+                            stderr="Judge process died unexpectedly.",
+                        )
+                        proc = _start_proc()
+                        continue
+
+                    start = time.perf_counter()
+                    result = _read_harness_result(proc, timeout_per_test)
+                    runtime_ms = int((time.perf_counter() - start) * 1000)
+
+                if result is None:
+                    _kill_proc(proc)
+                    yield TestResult(
+                        index=index,
+                        status="time_limit",
+                        expected=expected,
+                        actual="",
+                        runtime_ms=int(timeout_per_test * 1000),
+                    )
+                    proc = _start_proc() if index + 1 < len(test_list) else None
+                else:
+                    out_str, err_str, status_str = result
+                    if status_str == "error":
+                        final_status = "runtime_error"
+                    elif _normalize_output(out_str) == _normalize_output(expected):
+                        final_status = "passed"
+                    else:
+                        final_status = "wrong_answer"
+
+                    yield TestResult(
+                        index=index,
+                        status=final_status,
+                        stdout=out_str,
+                        stderr=err_str,
+                        expected=expected,
+                        actual=out_str,
+                        runtime_ms=runtime_ms,
+                    )
+        finally:
+            if proc is not None:
+                try:
+                    proc.stdin.write(b"DONE\n")
+                    proc.stdin.close()
+                except OSError:
+                    pass
+                _kill_proc(proc)
+
+
 def run_code(
     language: str,
     code: str,
@@ -309,60 +585,7 @@ def run_code_iter(
         return
 
     wrapped_code = textwrap.dedent(code).rstrip() + "\n"
-    with tempfile.TemporaryDirectory(prefix="starlab-code-") as temp_dir:
-        solution_path = Path(temp_dir) / "solution.py"
-        solution_path.write_text(wrapped_code, encoding="utf-8")
-        cmd = _build_python_cmd(solution_path)
-
-        for index, test in enumerate(test_list):
-            expected = test.get("expected", "") or ""
-            stdin_text = test.get("input", "") or ""
-
-            if len(stdin_text.encode("utf-8")) > settings.judge_max_input_bytes:
-                yield TestResult(
-                    index=index,
-                    status="runtime_error",
-                    expected=expected,
-                    stderr="Test input exceeds the configured maximum size.",
-                )
-                continue
-
-            with _judge_semaphore:
-                try:
-                    returncode, stdout, stderr, runtime_ms, _ = _run_single(
-                        cmd, stdin_text, timeout_per_test
-                    )
-                except subprocess.TimeoutExpired as exc:
-                    timeout_ms = int(timeout_per_test * 1000)
-                    out_text = (exc.output or b"").decode("utf-8", errors="replace") if isinstance(exc.output, (bytes, bytearray)) else (exc.output or "")
-                    err_text = (exc.stderr or b"").decode("utf-8", errors="replace") if isinstance(exc.stderr, (bytes, bytearray)) else (exc.stderr or "")
-                    yield TestResult(
-                        index=index,
-                        status="time_limit",
-                        stdout=out_text,
-                        stderr=(err_text + "\nTime limit exceeded").strip(),
-                        expected=expected,
-                        actual=out_text,
-                        runtime_ms=timeout_ms,
-                    )
-                    continue
-
-            if returncode != 0:
-                status = "runtime_error"
-            elif _normalize_output(stdout) == _normalize_output(expected):
-                status = "passed"
-            else:
-                status = "wrong_answer"
-
-            yield TestResult(
-                index=index,
-                status=status,
-                stdout=stdout,
-                stderr=stderr,
-                expected=expected,
-                actual=stdout,
-                runtime_ms=runtime_ms,
-            )
+    yield from _run_python_harness_iter(wrapped_code, test_list, timeout_per_test)
 
 
 def _run_code_c_iter(
