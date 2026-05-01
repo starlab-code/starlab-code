@@ -4938,8 +4938,8 @@ function StudentMoveModal({
 }) {
   const teacherOptions = teachers.length > 0 ? teachers : [currentUser];
   const initialTeacherId =
-    student.created_by_teacher_id && teacherOptions.some((teacher) => teacher.id === student.created_by_teacher_id)
-      ? student.created_by_teacher_id
+    student.primary_teacher_id && teacherOptions.some((teacher) => teacher.id === student.primary_teacher_id)
+      ? student.primary_teacher_id
       : teacherOptions[0]?.id ?? currentUser.id;
   const [draft, setDraft] = useState<StudentMoveDraft>({
     teacher_id: initialTeacherId,
