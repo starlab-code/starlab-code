@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from .auth import get_password_hash
 from .config import settings
 from .models import Assignment, Category, DifficultyLevel, Problem, TestCase, User, UserRole
+from .utils.utils import seed_demo_users
 
 
 Case = tuple[str, str, str]
@@ -56,6 +57,8 @@ def spec(
 def seed_initial_data(session: Session) -> None:
     primary_teacher = ensure_primary_teacher(session)
     backfill_user_hierarchy(session, primary_teacher)
+    if settings.seed_demo_data:
+        seed_demo_users(session, primary_teacher)
     categories = ensure_categories(session)
     if settings.seed_demo_data:
         seed_problem_catalog(session, categories, primary_teacher)
@@ -106,6 +109,7 @@ def seed_initial_data(session: Session) -> None:
 
     session.commit()
 
+"""seed_config.json에 정의된 유저 생성 함수"""
 def ensure_primary_teacher(session: Session) -> User:
     teacher = session.exec(select(User).where(User.username == settings.primary_teacher_username)).first()
     if teacher and teacher.role != UserRole.teacher:

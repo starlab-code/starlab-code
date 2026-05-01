@@ -131,6 +131,7 @@ class StudentUpdate(SQLModel):
     password: Optional[str] = None
     class_name: Optional[str] = None
     created_by_teacher_id: Optional[int] = None
+    primary_teacher_id: Optional[int] = None
 
 
 class TeacherUpdate(SQLModel):
@@ -175,6 +176,14 @@ class TestCaseRead(SQLModel):
     expected_output: str
     is_public: bool
     note: str = ""
+
+
+class TestCaseUpdate(SQLModel):
+    """단일 테스트케이스 수정용 스키마"""
+    input_data: Optional[str] = None
+    expected_output: Optional[str] = None
+    is_public: Optional[bool] = None
+    note: Optional[str] = None
 
 
 class ProblemCreate(SQLModel):
