@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
+from sqlmodel import Session, delete, select
 
 from .. import auth
 from ..db import get_session
@@ -28,21 +28,14 @@ def delete_problem(
     if not problem:
         raise HTTPException(status_code=404, detail="문제를 찾을 수 없습니다.")
 
-    # 이 문제에 연결된 제출 기록 삭제 (assignment FK 참조가 있으므로 먼저)
-    submissions = session.exec(select(Submission).where(Submission.problem_id == problem_id)).all()
-    for submission in submissions:
-        session.delete(submission)
-
-    # 이 문제에 연결된 과제 삭제
-    assignments = session.exec(select(Assignment).where(Assignment.problem_id == problem_id)).all()
-    for assignment in assignments:
-        session.delete(assignment)
-
-    # 테스트케이스 삭제
-    testcases = session.exec(select(TestCase).where(TestCase.problem_id == problem_id)).all()
-    for testcase in testcases:
-        session.delete(testcase)
-
+    # bulk delete로 즉시 SQL 실행 → FK 순서 보장
+    # 1) Submission (→ assignment.id, problem.id 참조)
+    session.exec(delete(Submission).where(Submission.problem_id == problem_id))
+    # 2) Assignment (→ problem.id 참조)
+    session.exec(delete(Assignment).where(Assignment.problem_id == problem_id))
+    # 3) TestCase (→ problem.id 참조)
+    session.exec(delete(TestCase).where(TestCase.problem_id == problem_id))
+    # 4) Problem
     session.delete(problem)
     session.commit()
 
