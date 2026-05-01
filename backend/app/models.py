@@ -131,6 +131,7 @@ class StudentUpdate(SQLModel):
     password: Optional[str] = None
     class_name: Optional[str] = None
     created_by_teacher_id: Optional[int] = None
+    primary_teacher_id: Optional[int] = None
 
 
 class TeacherUpdate(SQLModel):
