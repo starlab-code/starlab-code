@@ -5037,14 +5037,13 @@ function AccountsView(props: {
     const map = new Map<string, UserProfile[]>();
     for (const student of students) {
       if (student.role !== "student") continue;
-      if (student.primary_teacher_id !== user.id) continue;
       const key = (student.class_name ?? "").trim() || "반 미지정";
       const bucket = map.get(key) ?? [];
       bucket.push(student);
       map.set(key, bucket);
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [students, user.id]);
+  }, [students]);
 
   return (
     <div className="page-stack list-page">
