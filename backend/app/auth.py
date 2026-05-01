@@ -8,7 +8,7 @@ from passlib.context import CryptContext
 from sqlmodel import Session, select
 
 from .config import settings
-from .db import engine
+from .db import get_session
 from .models import User, UserRole
 
 
@@ -35,14 +35,13 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return jwt.encode(to_encode, settings.secret_key, algorithm=ALGORITHM)
 
 
-def get_user_by_username(username: str) -> Optional[User]:
-    with Session(engine) as session:
-        statement = select(User).where(User.username == username)
-        return session.exec(statement).first()
+def get_user_by_username(session: Session, username: str) -> Optional[User]:
+    statement = select(User).where(User.username == username)
+    return session.exec(statement).first()
 
 
-def authenticate_user(username: str, password: str) -> Optional[User]:
-    user = get_user_by_username(username)
+def authenticate_user(session: Session, username: str, password: str) -> Optional[User]:
+    user = get_user_by_username(session, username)
     if not user:
         return None
     if not verify_password(password, user.hashed_password):
@@ -50,7 +49,10 @@ def authenticate_user(username: str, password: str) -> Optional[User]:
     return user
 
 
-def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    session: Session = Depends(get_session),
+) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -65,7 +67,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     except JWTError as exc:
         raise credentials_exception from exc
 
-    user = get_user_by_username(username)
+    user = get_user_by_username(session, username)
     if user is None:
         raise credentials_exception
     return user

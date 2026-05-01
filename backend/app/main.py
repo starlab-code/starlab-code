@@ -300,9 +300,13 @@ def register(payload: UserCreate, session: Session = Depends(get_session)):
 
 
 @app.post("/auth/token", response_model=TokenResponse)
-def login(form_data: LoginForm = Depends()):
-    user = auth.authenticate_user(form_data.username, form_data.password)
+def login(form_data: LoginForm = Depends(), session: Session = Depends(get_session)):
+    user = auth.get_user_by_username(session, form_data.username)
     if not user:
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    session.expunge(user)
+    session.close()
+    if not auth.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     if form_data.role and user.role != form_data.role:
         role_label = "teacher" if form_data.role == UserRole.teacher else "student"
