@@ -1656,6 +1656,18 @@ export default function App() {
   }, [sidebarCollapsed]);
 
   useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(() => setMessage(null), 3500);
+    return () => clearTimeout(t);
+  }, [message]);
+
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(null), 4500);
+    return () => clearTimeout(t);
+  }, [error]);
+
+  useEffect(() => {
     if (!profileMenuOpen) return;
 
     function closeOnOutsideClick(event: PointerEvent) {
@@ -2863,6 +2875,12 @@ export default function App() {
       </main>
       {!isEditorWindow && <AppFooter user={user} healthState={healthState} apiBaseUrl={API_BASE_URL} />}
       {confirmDialog && <ConfirmDialogModal dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />}
+      {(message || error) && (
+        <div className={`app-toast app-toast-${error ? "error" : "ok"}`} role="status">
+          <span>{error ?? message}</span>
+          <button type="button" aria-label="닫기" onClick={() => { setError(null); setMessage(null); }}>✕</button>
+        </div>
+      )}
     </div>
   );
 }
