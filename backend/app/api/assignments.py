@@ -24,6 +24,10 @@ from ..utils import category_lookup
 router = APIRouter(prefix="/assignments", tags=["assignments"])
 
 
+#==============================================
+# 내부 유틸리티 함수 정의
+#==============================================
+
 def _group_key(title: str, problem_id: int, class_name: str, assignment_type: str) -> str:
     return f"{title}|{problem_id}|{class_name}|{assignment_type}"
 
@@ -121,7 +125,11 @@ def build_assignment_reads(session: Session, assignments: List[Assignment]) -> L
         )
     return response
 
+#==============================================
+# 라우터 함수 정의
+#==============================================
 
+"""과제 생성 API"""
 @router.post("", response_model=List[AssignmentRead])
 def create_assignments(
     payload: AssignmentCreate,
@@ -181,7 +189,87 @@ def create_assignments(
 
     return build_assignment_reads(session, created_assignments)
 
+"""과제 조회 API"""
+@router.get("", response_model=List[AssignmentRead])
+def list_assignments(
+    current_user: User = Depends(auth.get_current_user),
+    session: Session = Depends(get_session),
+):
+    if current_user.role == UserRole.teacher:
+        assignments = session.exec(select(Assignment).where(Assignment.teacher_id == current_user.id).order_by(Assignment.created_at.desc())).all()
+        return build_assignment_reads(session, assignments)
 
+    assignments = session.exec(select(Assignment).where(Assignment.student_id == current_user.id).order_by(Assignment.created_at.desc())).all()
+    return build_assignment_reads(session, assignments)
+
+
+"""단일 과제 수정 API"""
+@router.patch("/{assignment_id}", response_model=AssignmentRead)
+def update_assignment(
+    assignment_id: int,
+    payload: AssignmentUpdate,
+    current_user: User = Depends(auth.require_teacher),
+    session: Session = Depends(get_session),
+):
+    assignment = session.get(Assignment, assignment_id)
+    if not assignment:
+        raise HTTPException(status_code=404, detail="과제를 찾을 수 없습니다.")
+
+    if assignment.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="이 과제를 수정할 권한이 없습니다.")
+
+    if payload.problem_id is not None:
+        problem = session.get(Problem, payload.problem_id)
+        if not problem:
+            raise HTTPException(status_code=404, detail="문제를 찾을 수 없습니다.")
+        assignment.problem_id = payload.problem_id
+
+    if payload.title is not None:
+        assignment.title = payload.title
+    if payload.assignment_type is not None:
+        assignment.assignment_type = payload.assignment_type
+    if payload.due_at is not None:
+        assignment.due_at = payload.due_at
+    if payload.classroom_label is not None:
+        assignment.classroom_label = payload.classroom_label
+
+    session.add(assignment)
+    session.commit()
+    session.refresh(assignment)
+
+    return build_assignment_reads(session, [assignment])[0]
+
+
+"""단일 과제 삭제 API"""
+@router.delete("/{assignment_id}")
+def delete_assignment(
+    assignment_id: int,
+    current_user: User = Depends(auth.require_teacher),
+    session: Session = Depends(get_session),
+):
+    assignment = session.get(Assignment, assignment_id)
+    if not assignment:
+        raise HTTPException(status_code=404, detail="과제를 찾을 수 없습니다.")
+
+    if assignment.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="이 과제를 삭제할 권한이 없습니다.")
+
+    submissions = session.exec(
+        select(Submission).where(Submission.assignment_id == assignment_id)
+    ).all()
+    for submission in submissions:
+        submission.assignment_id = None
+        session.add(submission)
+
+    session.delete(assignment)
+    session.commit()
+
+    return {"ok": True}
+
+
+
+
+"""그룹 단위 과제 목록 조회 API"""
 @router.get("/groups", response_model=List[AssignmentGroup])
 def list_assignment_groups(
     current_user: User = Depends(auth.require_teacher),
@@ -270,6 +358,8 @@ def list_assignment_groups(
     return response
 
 
+
+"""그룹 단위 과제 수정 API"""
 @router.patch("/groups", response_model=List[AssignmentRead])
 def update_assignment_group(
     group_key: str = Query(...),
@@ -277,7 +367,7 @@ def update_assignment_group(
     current_user: User = Depends(auth.require_teacher),
     session: Session = Depends(get_session),
 ):
-    """그룹 단위 과제 수정"""
+
     parsed = _parse_group_key(group_key)
     if not parsed:
         raise HTTPException(status_code=400, detail="잘못된 group_key입니다.")
@@ -312,13 +402,13 @@ def update_assignment_group(
     return build_assignment_reads(session, matched)
 
 
+"""그룹 단위 과제 삭제 API"""
 @router.delete("/groups")
 def delete_assignment_group(
     group_key: str = Query(...),
     current_user: User = Depends(auth.require_teacher),
     session: Session = Depends(get_session),
 ):
-    """그룹 단위 과제 삭제"""
     parsed = _parse_group_key(group_key)
     if not parsed:
         raise HTTPException(status_code=400, detail="잘못된 group_key입니다.")
@@ -344,6 +434,7 @@ def delete_assignment_group(
     return {"ok": True, "deleted_count": len(matched)}
 
 
+"""과제 그룹 상세 조회 API"""
 @router.get("/groups/detail", response_model=List[AssignmentGroupStudent])
 def assignment_group_detail(
     group_key: str = Query(...),
@@ -434,79 +525,3 @@ def assignment_group_detail(
     )
     return response
 
-
-@router.get("", response_model=List[AssignmentRead])
-def list_assignments(
-    current_user: User = Depends(auth.get_current_user),
-    session: Session = Depends(get_session),
-):
-    if current_user.role == UserRole.teacher:
-        assignments = session.exec(select(Assignment).where(Assignment.teacher_id == current_user.id).order_by(Assignment.created_at.desc())).all()
-        return build_assignment_reads(session, assignments)
-
-    assignments = session.exec(select(Assignment).where(Assignment.student_id == current_user.id).order_by(Assignment.created_at.desc())).all()
-    return build_assignment_reads(session, assignments)
-
-
-@router.patch("/{assignment_id}", response_model=AssignmentRead)
-def update_assignment(
-    assignment_id: int,
-    payload: AssignmentUpdate,
-    current_user: User = Depends(auth.require_teacher),
-    session: Session = Depends(get_session),
-):
-    """단일 과제 수정"""
-    assignment = session.get(Assignment, assignment_id)
-    if not assignment:
-        raise HTTPException(status_code=404, detail="과제를 찾을 수 없습니다.")
-
-    if assignment.teacher_id != current_user.id:
-        raise HTTPException(status_code=403, detail="이 과제를 수정할 권한이 없습니다.")
-
-    if payload.problem_id is not None:
-        problem = session.get(Problem, payload.problem_id)
-        if not problem:
-            raise HTTPException(status_code=404, detail="문제를 찾을 수 없습니다.")
-        assignment.problem_id = payload.problem_id
-
-    if payload.title is not None:
-        assignment.title = payload.title
-    if payload.assignment_type is not None:
-        assignment.assignment_type = payload.assignment_type
-    if payload.due_at is not None:
-        assignment.due_at = payload.due_at
-    if payload.classroom_label is not None:
-        assignment.classroom_label = payload.classroom_label
-
-    session.add(assignment)
-    session.commit()
-    session.refresh(assignment)
-
-    return build_assignment_reads(session, [assignment])[0]
-
-
-@router.delete("/{assignment_id}")
-def delete_assignment(
-    assignment_id: int,
-    current_user: User = Depends(auth.require_teacher),
-    session: Session = Depends(get_session),
-):
-    """단일 과제 삭제"""
-    assignment = session.get(Assignment, assignment_id)
-    if not assignment:
-        raise HTTPException(status_code=404, detail="과제를 찾을 수 없습니다.")
-
-    if assignment.teacher_id != current_user.id:
-        raise HTTPException(status_code=403, detail="이 과제를 삭제할 권한이 없습니다.")
-
-    submissions = session.exec(
-        select(Submission).where(Submission.assignment_id == assignment_id)
-    ).all()
-    for submission in submissions:
-        submission.assignment_id = None
-        session.add(submission)
-
-    session.delete(assignment)
-    session.commit()
-
-    return {"ok": True}

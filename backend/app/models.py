@@ -124,6 +124,22 @@ class StudentCreate(SQLModel):
     class_name: str
 
 
+class StudentUpdate(SQLModel):
+    """학생 정보 수정용 스키마"""
+    username: Optional[str] = None
+    display_name: Optional[str] = None
+    password: Optional[str] = None
+    class_name: Optional[str] = None
+    created_by_teacher_id: Optional[int] = None
+
+
+class TeacherUpdate(SQLModel):
+    """선생님 정보 수정용 스키마"""
+    username: Optional[str] = None
+    display_name: Optional[str] = None
+    password: Optional[str] = None
+
+
 class UserRead(SQLModel):
     id: int
     username: str
