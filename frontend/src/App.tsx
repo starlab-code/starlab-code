@@ -9,6 +9,7 @@ type UserRole = "teacher" | "student";
 type Difficulty = "beginner" | "basic" | "intermediate";
 type AssignmentType = "homework" | "classroom";
 type HealthState = "checking" | "ok" | "down";
+type AppTheme = "light" | "dark";
 type View =
   | "home"
   | "problems"
@@ -748,10 +749,6 @@ function formatStudyDuration(startedAt: number, now: Date) {
   return `${hours}시간 ${minutes}분`;
 }
 
-function userInitial(name: string) {
-  return name.trim().slice(0, 1).toUpperCase() || "S";
-}
-
 function readEditorWindowState() {
   if (typeof window === "undefined") {
     return { enabled: false, problemId: null as number | null };
@@ -1020,6 +1017,75 @@ function DifficultyBadge({ level }: { level: Difficulty }) {
 function StatusBadge({ status }: { status: string }) {
   const tone = statusTone(status);
   return <span className={`verdict verdict-${tone}`}>{statusLabel(status)}</span>;
+}
+
+function ThemeToggleIcon({ targetTheme }: { targetTheme: AppTheme }) {
+  const common = {
+    width: 18,
+    height: 18,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+
+  if (targetTheme === "dark") {
+    return (
+      <svg {...common} className="theme-toggle-icon">
+        <path d="M20.5 14.2A7.7 7.7 0 0 1 9.8 3.5 8.6 8.6 0 1 0 20.5 14.2Z" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg {...common} className="theme-toggle-icon">
+      <circle cx="12" cy="12" r="4.2" />
+      <path d="M12 2.8v2" />
+      <path d="M12 19.2v2" />
+      <path d="m4.5 4.5 1.4 1.4" />
+      <path d="m18.1 18.1 1.4 1.4" />
+      <path d="M2.8 12h2" />
+      <path d="M19.2 12h2" />
+      <path d="m4.5 19.5 1.4-1.4" />
+      <path d="m18.1 5.9 1.4-1.4" />
+    </svg>
+  );
+}
+
+function ProfileRoleIcon({ role }: { role: UserRole }) {
+  const common = {
+    width: 18,
+    height: 18,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+
+  if (role === "teacher") {
+    return (
+      <svg {...common} className="profile-avatar-icon profile-avatar-icon-teacher">
+        <rect x="12.1" y="4.3" width="8.2" height="8.2" rx="0.8" />
+        <circle className="profile-avatar-icon-fill" cx="6.4" cy="5.9" r="2.4" />
+        <path className="profile-avatar-icon-fill" d="M3.8 18.7v-7.9c0-1.4 1.1-2.5 2.5-2.5h0.2c1.4 0 2.5 1.1 2.5 2.5v7.9H7.4v-5.5h-2v5.5H3.8Z" />
+        <path d="M8.4 10.6 11 12l3.6-2.4" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg {...common} className="profile-avatar-icon">
+      <path d="M12 4 4 8l8 4 8-4-8-4Z" />
+      <path d="M6.8 10.2v4.2c1.6 1.5 3.3 2.2 5.2 2.2s3.6-.7 5.2-2.2v-4.2" />
+      <path d="M20 8v5" />
+    </svg>
+  );
 }
 
 function SideNavIcon({ view }: { view: View }) {
@@ -1410,6 +1476,10 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() =>
     typeof window === "undefined" ? false : localStorage.getItem("starlab-sidebar-collapsed") === "1",
   );
+  const [appTheme, setAppTheme] = useState<AppTheme>(() => {
+    if (typeof window === "undefined") return "light";
+    return localStorage.getItem("starlab-theme") === "dark" ? "dark" : "light";
+  });
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogConfig | null>(null);
   const [clockNow, setClockNow] = useState(() => new Date());
@@ -1755,6 +1825,12 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("starlab-sidebar-collapsed", sidebarCollapsed ? "1" : "0");
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = appTheme;
+    document.documentElement.style.colorScheme = appTheme;
+    localStorage.setItem("starlab-theme", appTheme);
+  }, [appTheme]);
 
   useEffect(() => {
     if (!profileMenuOpen) return;
@@ -2618,6 +2694,17 @@ export default function App() {
               <strong>{studyDuration}</strong>
             </span>
           </div>
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={() => setAppTheme((current) => (current === "dark" ? "light" : "dark"))}
+            aria-label={appTheme === "dark" ? "라이트 테마로 변경" : "다크 테마로 변경"}
+            title={appTheme === "dark" ? "라이트 테마" : "다크 테마"}
+          >
+            <span className="theme-toggle-mark">
+              <ThemeToggleIcon targetTheme={appTheme === "dark" ? "light" : "dark"} />
+            </span>
+          </button>
           <div className="profile-menu-wrap" ref={profileMenuRef}>
             <button
               type="button"
@@ -2626,7 +2713,9 @@ export default function App() {
               aria-haspopup="menu"
               aria-expanded={profileMenuOpen}
             >
-              <span className="profile-avatar">{userInitial(user.display_name)}</span>
+              <span className="profile-avatar" aria-hidden="true">
+                <ProfileRoleIcon role={user.role} />
+              </span>
               <span className="profile-trigger-copy">
                 <strong>{user.display_name}</strong>
                 <span>
@@ -2902,8 +2991,8 @@ function AppFooter({
         <div className="footer-brand">
           <BrandMark className="footer-brand-mark" />
           <div>
-            <strong>Starlab Code</strong>
-            <span>수업용 알고리즘 학습 플랫폼</span>
+            <strong>Starlab Expert</strong>
+            <span>Confidential Starlab. 2026</span>
           </div>
         </div>
         <div className="footer-meta">
@@ -3523,34 +3612,40 @@ function StudentAcademyHome(props: {
                   ))}
                   <polygon points={radarPolygon} className="sh-radar-fill" />
                   <polygon points={radarPolygon} className="sh-radar-stroke" />
-                  {radarAxisPoints.map((axis) => (
-                    <g key={`${axis.row.name}-label`}>
-                      <circle
-                        cx={radarCenter + (axis.end.x - radarCenter) * (axis.row.pct / 100)}
-                        cy={radarCenter + (axis.end.y - radarCenter) * (axis.row.pct / 100)}
-                        r="3.2"
-                        className="sh-radar-dot"
-                      />
-                      <text
-                        x={axis.label.x}
-                        y={axis.label.y}
-                        textAnchor={axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle"}
-                        dominantBaseline="middle"
-                        className="sh-radar-label"
-                      >
-                        {axis.row.name}
-                      </text>
-                      <text
-                        x={axis.label.x}
-                        y={axis.label.y + 12}
-                        textAnchor={axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle"}
-                        dominantBaseline="middle"
-                        className="sh-radar-label-pct"
-                      >
-                        {axis.row.pct}%
-                      </text>
-                    </g>
-                  ))}
+                  {radarAxisPoints.map((axis) => {
+                    const isTopLabel = axis.label.y < radarCenter && Math.abs(axis.label.x - radarCenter) < 8;
+                    const labelY = axis.label.y + (isTopLabel ? -14 : 0);
+                    const anchor = axis.label.x < radarCenter - 8 ? "end" : axis.label.x > radarCenter + 8 ? "start" : "middle";
+
+                    return (
+                      <g key={`${axis.row.name}-label`}>
+                        <circle
+                          cx={radarCenter + (axis.end.x - radarCenter) * (axis.row.pct / 100)}
+                          cy={radarCenter + (axis.end.y - radarCenter) * (axis.row.pct / 100)}
+                          r="3.2"
+                          className="sh-radar-dot"
+                        />
+                        <text
+                          x={axis.label.x}
+                          y={labelY}
+                          textAnchor={anchor}
+                          dominantBaseline="middle"
+                          className="sh-radar-label"
+                        >
+                          {axis.row.name}
+                        </text>
+                        <text
+                          x={axis.label.x}
+                          y={labelY + 12}
+                          textAnchor={anchor}
+                          dominantBaseline="middle"
+                          className="sh-radar-label-pct"
+                        >
+                          {axis.row.pct}%
+                        </text>
+                      </g>
+                    );
+                  })}
                   <circle cx={radarCenter} cy={radarCenter} r="20" className="sh-radar-center" />
                   <text x={radarCenter} y={radarCenter - 2} textAnchor="middle" className="sh-radar-center-num">
                     {radarTotalSolved}
@@ -4876,7 +4971,7 @@ function StudentMoveModal({
           <input
             value={draft.class_name}
             onChange={(event) => setDraft((current) => ({ ...current, class_name: event.target.value }))}
-            placeholder="예: 토11시 / 금2시"
+            placeholder="예: 토11시 / 금2시 (띄어쓰기 주의)"
             autoFocus
           />
         </label>
