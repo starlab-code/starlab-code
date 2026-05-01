@@ -417,3 +417,16 @@ class SubmissionFeedItem(SQLModel):
     total_tests: int
     runtime_ms: int
     created_at: datetime
+
+
+class BootstrapResponse(SQLModel):
+    user: UserRead
+    dashboard: DashboardSummary
+    categories: List[Category]
+    problems: List[ProblemCard]
+    assignments: List[AssignmentRead]
+    submissions: List[Submission]
+    teachers: List[UserRead] = Field(default_factory=list)
+    students: List[UserRead] = Field(default_factory=list)
+    assignment_groups: List[AssignmentGroup] = Field(default_factory=list)
+    leaderboard: List[LeaderboardEntry] = Field(default_factory=list)

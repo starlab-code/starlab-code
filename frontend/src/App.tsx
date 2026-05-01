@@ -172,6 +172,19 @@ type SubmissionJobRead = {
   submission_id: number | null;
 };
 
+type BootstrapResponse = {
+  user: UserProfile;
+  dashboard: DashboardSummary;
+  categories: Category[];
+  problems: ProblemCard[];
+  assignments: Assignment[];
+  submissions: Submission[];
+  teachers: UserProfile[];
+  students: UserProfile[];
+  assignment_groups: AssignmentGroup[];
+  leaderboard: LeaderboardEntry[];
+};
+
 type DashboardSummary = {
   assigned_count: number;
   completed_count: number;
@@ -1740,46 +1753,17 @@ export default function App() {
     setIsLoading(true);
     setError(null);
     try {
-      const profile = knownUser ?? (await request<UserProfile>("/auth/me", {}, nextToken));
-      const calls: Promise<unknown>[] = [
-        request<DashboardSummary>("/dashboard", {}, nextToken),
-        request<Category[]>("/categories", {}, nextToken),
-        request<ProblemCard[]>("/problems", {}, nextToken),
-        request<Assignment[]>("/assignments", {}, nextToken),
-        request<Submission[]>("/submissions", {}, nextToken),
-      ];
-      if (profile.role === "teacher") {
-        calls.push(request<UserProfile[]>("/teachers", {}, nextToken));
-        calls.push(request<UserProfile[]>("/students", {}, nextToken));
-        // DISABLED: real-time feed endpoint is commented out on the backend to
-        // avoid steady DB pool pressure on Render's free tier.
-        // calls.push(request<SubmissionFeedItem[]>("/submissions/feed?limit=50", {}, nextToken));
-        calls.push(request<AssignmentGroup[]>("/assignments/groups", {}, nextToken));
-      }
-      const leaderboardCallIndex = calls.length;
-      calls.push(request<LeaderboardEntry[]>("/leaderboard", {}, nextToken));
-
-      const results = await Promise.all(calls);
-      const [
-        dashboardResult,
-        categoriesResult,
-        problemsResult,
-        assignmentsResult,
-        submissionsResult,
-        teachersResult,
-        studentsResult,
-        groupsResult,
-      ] = results as [
-        DashboardSummary,
-        Category[],
-        ProblemCard[],
-        Assignment[],
-        Submission[],
-        UserProfile[] | undefined,
-        UserProfile[] | undefined,
-        AssignmentGroup[] | undefined,
-      ];
-      const leaderboardResult = results[leaderboardCallIndex] as LeaderboardEntry[] | undefined;
+      const bootstrap = await request<BootstrapResponse>("/bootstrap", {}, nextToken);
+      const profile = knownUser ?? bootstrap.user;
+      const dashboardResult = bootstrap.dashboard;
+      const categoriesResult = bootstrap.categories;
+      const problemsResult = bootstrap.problems;
+      const assignmentsResult = bootstrap.assignments;
+      const submissionsResult = bootstrap.submissions;
+      const teachersResult = bootstrap.teachers;
+      const studentsResult = bootstrap.students;
+      const groupsResult = bootstrap.assignment_groups;
+      const leaderboardResult = bootstrap.leaderboard;
 
       setToken(nextToken);
       setUser(profile);

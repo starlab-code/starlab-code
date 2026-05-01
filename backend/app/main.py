@@ -10,13 +10,16 @@ from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 
 from . import auth, judge
-from .api.assignments import router as assignments_router
+from .api.assignments import build_assignment_reads, list_assignment_groups, router as assignments_router
 from .api.problem import router as problem_router
 from .api.users import router as users_router
 from .config import settings
 from .db import create_db_and_tables, engine, get_session
 from .models import (
     Assignment,
+    AssignmentGroup,
+    AssignmentRead,
+    BootstrapResponse,
     Category,
     ClassroomSummary,
     CodeExecutionResponse,
@@ -312,6 +315,18 @@ def login(form_data: LoginForm = Depends()):
 @app.get("/auth/me", response_model=UserRead)
 def me(current_user: User = Depends(auth.get_current_user)):
     return to_user_read(current_user)
+
+
+def list_assignments_for_user(session: Session, current_user: User) -> List[AssignmentRead]:
+    if current_user.role == UserRole.teacher:
+        assignments = session.exec(
+            select(Assignment).where(Assignment.teacher_id == current_user.id).order_by(Assignment.created_at.desc())
+        ).all()
+    else:
+        assignments = session.exec(
+            select(Assignment).where(Assignment.student_id == current_user.id).order_by(Assignment.created_at.desc())
+        ).all()
+    return build_assignment_reads(session, assignments)
 
 
 @app.get("/dashboard", response_model=DashboardSummary)
@@ -810,6 +825,33 @@ def list_submissions(
         statement = statement.where(Submission.problem_id == problem_id)
     submissions = session.exec(statement.order_by(Submission.created_at.desc())).all()
     return submissions
+
+
+@app.get("/bootstrap", response_model=BootstrapResponse)
+def bootstrap(
+    current_user: User = Depends(auth.get_current_user),
+    session: Session = Depends(get_session),
+):
+    teachers: List[UserRead] = []
+    students: List[UserRead] = []
+    assignment_groups: List[AssignmentGroup] = []
+    if current_user.role == UserRole.teacher:
+        teachers = [to_user_read(teacher) for teacher in list_teachers_in_org(session, current_user)]
+        students = [to_user_read(student) for student in list_students_for_teacher(session, current_user)]
+        assignment_groups = list_assignment_groups(current_user=current_user, session=session)
+
+    return BootstrapResponse(
+        user=to_user_read(current_user),
+        dashboard=dashboard(current_user=current_user, session=session),
+        categories=list_categories(session=session),
+        problems=list_problems(session=session),
+        assignments=list_assignments_for_user(session, current_user),
+        submissions=list_submissions(current_user=current_user, session=session),
+        teachers=teachers,
+        students=students,
+        assignment_groups=assignment_groups,
+        leaderboard=leaderboard(current_user=current_user, session=session),
+    )
 
 
 # --- DISABLED: real-time submission feed -------------------------------------
