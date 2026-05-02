@@ -28,3 +28,7 @@ dist/
 
 # Project-specific local files
 backend/starlab_code_mvp.db
+
+# Claude Code
+CLAUDE.md
+.claude/
