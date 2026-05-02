@@ -1394,6 +1394,41 @@ function CodeEditor({
         return;
       }
     }
+
+    const PAIRS: Record<string, string> = { "(": ")", "{": "}", "[": "]" };
+    const CLOSERS = new Set([")", "}", "]"]);
+    if (e.key in PAIRS) {
+      if (ss !== se) {
+        e.preventDefault();
+        const selected = code.slice(ss, se);
+        const inserted = e.key + selected + PAIRS[e.key];
+        onChange(code.slice(0, ss) + inserted + code.slice(se));
+        requestAnimationFrame(() => ta.setSelectionRange(ss + 1, se + 1));
+      } else {
+        e.preventDefault();
+        const closing = PAIRS[e.key];
+        onChange(code.slice(0, ss) + e.key + closing + code.slice(se));
+        requestAnimationFrame(() => ta.setSelectionRange(ss + 1, ss + 1));
+      }
+      return;
+    }
+
+    if (CLOSERS.has(e.key) && ss === se && code[ss] === e.key) {
+      e.preventDefault();
+      requestAnimationFrame(() => ta.setSelectionRange(ss + 1, ss + 1));
+      return;
+    }
+
+    if (e.key === "Backspace" && ss === se) {
+      const prev = code[ss - 1];
+      const next = code[ss];
+      if (prev && next && PAIRS[prev] === next) {
+        e.preventDefault();
+        onChange(code.slice(0, ss - 1) + code.slice(ss + 1));
+        requestAnimationFrame(() => ta.setSelectionRange(ss - 1, ss - 1));
+        return;
+      }
+    }
   }
 
   function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
