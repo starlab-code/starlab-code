@@ -1,4 +1,4 @@
-import { FormEvent, Fragment, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+﻿import { FormEvent, Fragment, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -1851,6 +1851,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (isPreviewMode) return;
+    window.starlabApp?.setRole(user?.role ?? null).catch(() => {});
+  }, [isPreviewMode, user?.role]);
+
+  useEffect(() => {
     const tick = () => setClockNow(new Date(Date.now() + serverClockOffsetRef.current));
     tick();
     const intervalId = window.setInterval(tick, 30_000);
@@ -2367,7 +2372,11 @@ export default function App() {
     }
   }
 
-  function logout() {
+  async function logout() {
+    if (!isPreviewMode) {
+      const result = await window.starlabApp?.requestLogout().catch(() => ({ ok: true, gated: false }));
+      if (result && !result.ok) return;
+    }
     localStorage.removeItem("starlab-code-token");
     setToken(null);
     setUser(null);
@@ -3066,6 +3075,7 @@ export default function App() {
             onOpenProblem={openProblem}
             assignments={assignments}
             students={students}
+            leaderboard={leaderboard}
             onGoLive={() => navigate("live")}
             onGoAssignments={() => navigate("assignments")}
             onGoManage={() => navigate("manage")}
@@ -3510,7 +3520,7 @@ function StudentAcademyHome(props: {
   const maxAccepted = Math.max(1, ...activity.map((day) => day.accepted));
   const categoryRows = metrics?.categoryRows ?? [];
   const myRank = leaderboard.find((entry) => entry.student_id === user.id) ?? null;
-  const topLeaderboard = leaderboard.slice(0, 12);
+  const topLeaderboard = leaderboard.slice(0, 10);
   const radarRows = categoryRows.slice(0, 8).map((row) => ({
     ...row,
     pct: row.total === 0 ? 0 : Math.round((row.solved / row.total) * 100),
@@ -3928,6 +3938,7 @@ function TeacherHome(props: {
   onOpenProblem: (id: number) => void;
   assignments: Assignment[];
   students: UserProfile[];
+  leaderboard: LeaderboardEntry[];
   onGoLive: () => void;
   onGoAssignments: () => void;
   onGoManage: () => void;
@@ -3943,6 +3954,7 @@ function TeacherHome(props: {
     onOpenProblem,
     assignments,
     students,
+    leaderboard,
     onGoLive,
     onGoAssignments,
     onGoManage,
@@ -4178,6 +4190,7 @@ function TeacherHomeRedesign(props: {
   onOpenProblem: (id: number) => void;
   assignments: Assignment[];
   students: UserProfile[];
+  leaderboard: LeaderboardEntry[];
   onGoLive: () => void;
   onGoAssignments: () => void;
   onGoManage: () => void;
@@ -4193,12 +4206,14 @@ function TeacherHomeRedesign(props: {
     onOpenProblem,
     assignments,
     students,
+    leaderboard,
     onGoLive,
     onGoAssignments,
     onGoManage,
   } = props;
   const myStudents = students.filter((s) => s.role === "student" && s.primary_teacher_id === user.id);
   const studentMap = new Map(students.map((s) => [s.id, s]));
+  const topLeaderboard = leaderboard.slice(0, 10);
   const pendingAssignments = assignments.filter((a) => !a.submitted).length;
   const assignmentGroups = Array.from(
     assignments
@@ -4363,30 +4378,26 @@ function TeacherHomeRedesign(props: {
 
         <section className="card">
           <div className="panel-head">
-            <h2>이번 주 상위 학생</h2>
-            <span className="muted">최근 7일 정답 기준</span>
+            <h2>전체 학생 랭킹</h2>
+            <span className="muted">Top 10</span>
           </div>
-          {!metrics || metrics.topStudents.length === 0 ? (
-            <p className="th-empty">이번 주 활동 데이터가 아직 충분하지 않습니다.</p>
+          {topLeaderboard.length === 0 ? (
+            <p className="th-empty">아직 랭킹 기록이 없습니다.</p>
           ) : (
             <ul className="ts-list">
-              {metrics.topStudents.map((row, i) => {
-                const student = studentMap.get(row.id);
-                const accuracy = row.submitted === 0 ? 0 : Math.round((row.accepted / row.submitted) * 100);
-                return (
-                  <li key={row.id} className="ts-row">
-                    <div className="ts-rank">{i + 1}</div>
-                    <div className="ts-main">
-                      <strong>{student?.display_name ?? `학생 #${row.id}`}</strong>
-                      <span>{student?.class_name ?? "반 정보 없음"}</span>
-                    </div>
-                    <div className="ts-meta">
-                      <strong>{row.solved}문제</strong>
-                      <span>정답률 {accuracy}%</span>
-                    </div>
-                  </li>
-                );
-              })}
+              {topLeaderboard.map((entry) => (
+                <li key={entry.student_id} className="ts-row">
+                  <div className="ts-rank">{entry.rank}</div>
+                  <div className="ts-main">
+                    <strong>{entry.student_name}</strong>
+                    <span>{entry.class_name ?? "반 정보 없음"}</span>
+                  </div>
+                  <div className="ts-meta">
+                    <strong>{entry.score}점</strong>
+                    <span>{entry.solved}문제 · 정답률 {entry.accuracy}%</span>
+                  </div>
+                </li>
+              ))}
             </ul>
           )}
         </section>

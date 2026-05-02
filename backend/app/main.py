@@ -384,29 +384,7 @@ def leaderboard(
     current_user: User = Depends(auth.get_current_user),
     session: Session = Depends(get_session),
 ):
-    if current_user.role == UserRole.student:
-        students = session.exec(
-            select(User).where(
-                User.role == UserRole.student,
-                User.primary_teacher_id == current_user.primary_teacher_id,
-            )
-        ).all()
-    elif current_user.is_primary_teacher:
-        org_teacher_ids = [t.id for t in list_teachers_in_org(session, current_user)]
-        org_teacher_ids.append(current_user.id)
-        students = session.exec(
-            select(User).where(
-                User.role == UserRole.student,
-                User.primary_teacher_id.in_(org_teacher_ids),
-            )
-        ).all()
-    else:
-        students = session.exec(
-            select(User).where(
-                User.role == UserRole.student,
-                User.primary_teacher_id == current_user.id,
-            )
-        ).all()
+    students = session.exec(select(User).where(User.role == UserRole.student)).all()
     if not students:
         return []
 

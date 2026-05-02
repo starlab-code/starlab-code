@@ -70,6 +70,7 @@ const updateState = {
 let installLaunched = false;
 let mainWindowRef = null;
 let currentRole = null; // 'student' | 'teacher' | null
+let studentLockdownActive = false;
 let exitPromptWindow = null;
 let exitResolver = null;
 let isQuittingAfterStorageCleanup = false;
@@ -373,18 +374,31 @@ function disengageStudentKiosk() {
   mainWindowRef.setAlwaysOnTop(false);
 }
 
-function applyRole(role) {
-  const normalized = role === "teacher" || role === "student" ? role : null;
-  if (currentRole === normalized) {
-    if (normalized === "student") engageStudentKiosk();
-    return;
-  }
-  currentRole = normalized;
-  if (normalized === "student") {
+async function isOnAcademyNetwork() {
+  const cfg = readUpdateConfig();
+  const academySsids = getAcademySsids(cfg);
+  if (academySsids.length === 0) return false;
+
+  const ssid = await getCurrentSsid();
+  return Boolean(
+    ssid && academySsids.some((entry) => entry.toLowerCase() === ssid.toLowerCase()),
+  );
+}
+
+async function refreshStudentLockdown() {
+  const shouldLock = currentRole === "student" && await isOnAcademyNetwork();
+  studentLockdownActive = shouldLock;
+  if (shouldLock) {
     engageStudentKiosk();
   } else {
     disengageStudentKiosk();
   }
+  return shouldLock;
+}
+
+function applyRole(role) {
+  currentRole = role === "teacher" || role === "student" ? role : null;
+  void refreshStudentLockdown();
 }
 
 async function showExitPasswordPrompt() {
@@ -487,15 +501,8 @@ async function requestStudentUnlock() {
 
   const cfg = readUpdateConfig();
   const password = getExitPassword(cfg);
-  const academySsids = getAcademySsids(cfg);
-
-  let onAcademy = false;
-  if (academySsids.length > 0) {
-    const ssid = await getCurrentSsid();
-    onAcademy = Boolean(
-      ssid && academySsids.some((entry) => entry.toLowerCase() === ssid.toLowerCase()),
-    );
-  }
+  const onAcademy = await isOnAcademyNetwork();
+  studentLockdownActive = onAcademy;
 
   // No password configured, or off the academy network → exit freely.
   if (!password || !onAcademy) {
@@ -624,7 +631,7 @@ function createWindow() {
   const enforceKioskIfStudent = () => {
     if (mainWindow.isDestroyed()) return;
     if (installLaunched) return;
-    if (currentRole !== "student") return;
+    if (!studentLockdownActive) return;
     if (!mainWindow.isFullScreen()) mainWindow.setFullScreen(true);
     if (!mainWindow.isKiosk()) mainWindow.setKiosk(true);
   };
@@ -632,7 +639,7 @@ function createWindow() {
   mainWindow.on("leave-kiosk", enforceKioskIfStudent);
   mainWindow.on("minimize", (event) => {
     if (installLaunched) return;
-    if (currentRole !== "student") return;
+    if (!studentLockdownActive) return;
     event.preventDefault();
     mainWindow.restore();
     enforceKioskIfStudent();
@@ -640,7 +647,7 @@ function createWindow() {
 
   // Block window-level fullscreen-toggle keys when locked to a student.
   mainWindow.webContents.on("before-input-event", (event, input) => {
-    if (currentRole !== "student") return;
+    if (!studentLockdownActive) return;
     if (input.type !== "keyDown") return;
     const key = (input.key || "").toLowerCase();
     if (key === "f11") {
@@ -693,6 +700,13 @@ function createWindow() {
       mainWindowRef = null;
     }
   });
+
+  mainWindow.on("close", (event) => {
+    if (installLaunched || isQuittingAfterStorageCleanup) return;
+    if (!studentLockdownActive) return;
+    event.preventDefault();
+    void handleExitRequest();
+  });
 }
 
 app.whenReady().then(() => {
@@ -709,6 +723,11 @@ app.whenReady().then(() => {
 
 app.on("before-quit", (event) => {
   if (isQuittingAfterStorageCleanup) return;
+  if (studentLockdownActive) {
+    event.preventDefault();
+    void handleExitRequest();
+    return;
+  }
   event.preventDefault();
   isQuittingAfterStorageCleanup = true;
   void clearRendererAuthToken().finally(() => app.quit());
