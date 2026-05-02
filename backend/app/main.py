@@ -4,10 +4,10 @@ import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Query
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_, update, delete as sa_delete
+from sqlalchemy import and_, func, or_, update, delete as sa_delete
 from sqlmodel import Session, select
 
 from . import auth, judge
@@ -15,7 +15,7 @@ from .api.assignments import build_assignment_reads, list_assignment_groups, rou
 from .api.problem import router as problem_router
 from .api.users import router as users_router
 from .config import settings
-from .db import create_db_and_tables, engine, get_session
+from .db import create_db_and_tables, engine, get_session, log_db_pool_status
 from .models import (
     Assignment,
     AssignmentGroup,
@@ -74,6 +74,17 @@ app.add_middleware(
 app.include_router(assignments_router)
 app.include_router(problem_router)
 app.include_router(users_router)
+
+
+@app.middleware("http")
+async def log_pool_status_for_request(request: Request, call_next):
+    label = f"{request.method} {request.url.path}"
+    log_db_pool_status(f"request-start {label}")
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        log_db_pool_status(f"request-end {label}")
 
 
 _job_wakeup = threading.Event()
@@ -928,6 +939,13 @@ def fetch_tests(session: Session, problem_id: int, public_only: bool) -> List[Te
     return session.exec(statement.order_by(TestCase.id)).all()
 
 
+def has_tests(session: Session, problem_id: int, public_only: bool) -> bool:
+    statement = select(func.count(TestCase.id)).where(TestCase.problem_id == problem_id)
+    if public_only:
+        statement = statement.where(TestCase.is_public == True)
+    return session.exec(statement).one() > 0
+
+
 def validate_submission_assignment(
     session: Session,
     assignment_id: Optional[int],
@@ -1074,6 +1092,24 @@ def submission_job_queue_position(session: Session, job: SubmissionJob) -> int:
         return running_count + 1
 
 
+def submission_job_queue_position_for_created_job(session: Session, job: SubmissionJob) -> int:
+    if job.id is None or job.status != SubmissionJobStatus.queued:
+        return 0
+    running_count = session.exec(
+        select(func.count(SubmissionJob.id)).where(SubmissionJob.status == SubmissionJobStatus.running)
+    ).one()
+    older_or_same_count = session.exec(
+        select(func.count(SubmissionJob.id)).where(
+            SubmissionJob.status == SubmissionJobStatus.queued,
+            or_(
+                SubmissionJob.created_at < job.created_at,
+                and_(SubmissionJob.created_at == job.created_at, SubmissionJob.id <= job.id),
+            ),
+        )
+    ).one()
+    return running_count + older_or_same_count
+
+
 def submission_job_to_read(session: Session, job: SubmissionJob) -> SubmissionJobRead:
     result = None
     if job.result_json:
@@ -1096,15 +1132,13 @@ def enqueue_submission_job(
     current_user: User,
 ) -> SubmissionJobCreateResponse:
     with Session(engine) as session:
-        problem = session.get(Problem, problem_id)
-        if not problem:
+        if not session.get(Problem, problem_id):
             raise HTTPException(status_code=404, detail="Problem not found")
         assignment_id = None
         if kind == SubmissionJobKind.submit:
             assignment = validate_submission_assignment(session, payload.assignment_id, problem_id, current_user)
             assignment_id = assignment.id if assignment else None
-        tests = fetch_tests(session, problem_id, public_only=kind == SubmissionJobKind.run)
-        if not tests:
+        if not has_tests(session, problem_id, public_only=kind == SubmissionJobKind.run):
             raise HTTPException(status_code=400, detail="No testcases configured")
         job = SubmissionJob(
             kind=kind,
@@ -1118,7 +1152,7 @@ def enqueue_submission_job(
         session.add(job)
         session.commit()
         session.refresh(job)
-        position = submission_job_queue_position(session, job)
+        position = submission_job_queue_position_for_created_job(session, job)
         job_id = job.id or 0
         job_status = job.status
     _job_wakeup.set()

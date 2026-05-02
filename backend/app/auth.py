@@ -8,7 +8,7 @@ from passlib.context import CryptContext
 from sqlmodel import Session, select
 
 from .config import settings
-from .db import get_session
+from .db import engine
 from .models import User, UserRole
 
 
@@ -51,7 +51,6 @@ def authenticate_user(session: Session, username: str, password: str) -> Optiona
 
 def get_current_user(
     token: str = Depends(oauth2_scheme),
-    session: Session = Depends(get_session),
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -67,10 +66,12 @@ def get_current_user(
     except JWTError as exc:
         raise credentials_exception from exc
 
-    user = get_user_by_username(session, username)
-    if user is None:
-        raise credentials_exception
-    return user
+    with Session(engine) as session:
+        user = get_user_by_username(session, username)
+        if user is None:
+            raise credentials_exception
+        session.expunge(user)
+        return user
 
 
 def require_teacher(user: User = Depends(get_current_user)) -> User:

@@ -74,6 +74,7 @@ let studentLockdownActive = false;
 let exitPromptWindow = null;
 let exitResolver = null;
 let isQuittingAfterStorageCleanup = false;
+let lockdownFocusTimer = null;
 
 function hasBundledApp() {
   return fs.existsSync(path.join(LOCAL_APP_DIR, "index.html"));
@@ -355,9 +356,30 @@ async function bootstrapAfterSplash() {
 
 function engageStudentKiosk() {
   if (!mainWindowRef || mainWindowRef.isDestroyed()) return;
+  try {
+    mainWindowRef.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  } catch {
+    // Not supported on every platform/window manager.
+  }
   if (!mainWindowRef.isFullScreen()) mainWindowRef.setFullScreen(true);
   if (!mainWindowRef.isKiosk()) mainWindowRef.setKiosk(true);
   mainWindowRef.setAlwaysOnTop(true, "screen-saver");
+  mainWindowRef.moveTop();
+  mainWindowRef.focus();
+  if (!lockdownFocusTimer) {
+    lockdownFocusTimer = setInterval(() => {
+      if (!studentLockdownActive || !mainWindowRef || mainWindowRef.isDestroyed()) return;
+      try {
+        mainWindowRef.setAlwaysOnTop(true, "screen-saver");
+        mainWindowRef.moveTop();
+        mainWindowRef.focus();
+        if (!mainWindowRef.isFullScreen()) mainWindowRef.setFullScreen(true);
+        if (!mainWindowRef.isKiosk()) mainWindowRef.setKiosk(true);
+      } catch {
+        // Best-effort focus recovery.
+      }
+    }, 750);
+  }
   if (!kioskHook.install()) {
     const err = kioskHook.getLastError();
     if (err && process.env.STARLAB_SHOW_UPDATE_ERRORS) {
@@ -368,10 +390,19 @@ function engageStudentKiosk() {
 
 function disengageStudentKiosk() {
   try { kioskHook.uninstall(); } catch { /* ignore */ }
+  if (lockdownFocusTimer) {
+    clearInterval(lockdownFocusTimer);
+    lockdownFocusTimer = null;
+  }
   if (!mainWindowRef || mainWindowRef.isDestroyed()) return;
   if (mainWindowRef.isKiosk()) mainWindowRef.setKiosk(false);
   if (mainWindowRef.isFullScreen()) mainWindowRef.setFullScreen(false);
   mainWindowRef.setAlwaysOnTop(false);
+  try {
+    mainWindowRef.setVisibleOnAllWorkspaces(false);
+  } catch {
+    // ignore
+  }
 }
 
 async function isOnAcademyNetwork() {

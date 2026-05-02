@@ -1,5 +1,6 @@
 // Windows-only low-level keyboard hook to block OS-level shortcuts
-// (Win key, Alt+Tab, Alt+Esc, Alt+F4, Ctrl+Esc) while a student is in kiosk mode.
+// (Win key, Alt+Tab, Alt+Esc, Alt+F4, Ctrl+Esc, virtual desktop shortcuts)
+// while a student is in kiosk mode.
 //
 // Note: Ctrl+Alt+Del cannot be blocked from user-mode code on Windows — it is the
 // Secure Attention Sequence and only Group Policy / Shell replacement can affect it.
@@ -9,9 +10,17 @@ const HC_ACTION = 0;
 
 const VK_TAB = 0x09;
 const VK_ESCAPE = 0x1b;
+const VK_SPACE = 0x20;
+const VK_LEFT = 0x25;
+const VK_RIGHT = 0x27;
+const VK_D = 0x44;
+const VK_F = 0x46;
 const VK_LWIN = 0x5b;
 const VK_RWIN = 0x5c;
 const VK_F4 = 0x73;
+const VK_MENU = 0x12;
+const VK_LMENU = 0xa4;
+const VK_RMENU = 0xa5;
 const VK_CONTROL = 0x11;
 const VK_LCONTROL = 0xa2;
 const VK_RCONTROL = 0xa3;
@@ -87,11 +96,23 @@ function isPressed(vk) {
 function shouldBlock(kbd) {
   const vk = kbd.vkCode;
   const altDown = (kbd.flags & LLKHF_ALTDOWN) !== 0;
+  const winDown = isPressed(VK_LWIN) || isPressed(VK_RWIN);
+  const ctrlDown = isPressed(VK_CONTROL) || isPressed(VK_LCONTROL) || isPressed(VK_RCONTROL);
 
+  // In lockdown mode, Alt and Win are shell-navigation keys first. Blocking the
+  // modifier itself is stricter than waiting for Alt+Tab/Win+Arrow, and prevents
+  // the shell switcher from opening before the second key arrives.
+  if (vk === VK_MENU || vk === VK_LMENU || vk === VK_RMENU) return true;
   if (vk === VK_LWIN || vk === VK_RWIN) return true;
+  if (winDown) return true;
   if (altDown && (vk === VK_TAB || vk === VK_ESCAPE || vk === VK_F4)) return true;
+  if (altDown && vk === VK_SPACE) return true;
+  if (ctrlDown && winDown && (vk === VK_LEFT || vk === VK_RIGHT || vk === VK_D || vk === VK_F4)) {
+    return true;
+  }
+  if (ctrlDown && altDown && vk === VK_TAB) return true;
   if (vk === VK_ESCAPE) {
-    if (isPressed(VK_CONTROL) || isPressed(VK_LCONTROL) || isPressed(VK_RCONTROL)) {
+    if (ctrlDown) {
       return true;
     }
   }
