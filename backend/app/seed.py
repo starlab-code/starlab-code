@@ -162,7 +162,7 @@ def backfill_user_hierarchy(session: Session, primary_teacher: User) -> None:
         if not creator or creator.role != UserRole.teacher:
             creator = primary_teacher
         student.created_by_teacher_id = creator.id
-        student.primary_teacher_id = creator.primary_teacher_id or creator.id
+        student.primary_teacher_id = creator.id
         session.add(student)
 
     session.flush()
