@@ -3638,6 +3638,41 @@ h3 { font-size: 0.95rem; font-weight: 700; }
 .assign-field { display: grid; gap: 0.3rem; min-width: 0; }
 .assign-field > span { font-size: 12.5px; font-weight: 600; color: var(--text-soft); }
 .assign-field-wide { grid-column: span 4; }
+.assign-problem-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  max-height: 260px;
+  overflow: auto;
+  padding: 0.55rem;
+  border: 1px solid var(--subtle-border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+.assign-problem-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.5rem;
+  min-height: 56px;
+  padding: 0.65rem;
+  border: 1px solid var(--subtle-border);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.assign-problem-option input { margin-top: 0.2rem; }
+.assign-problem-option strong,
+.assign-problem-option small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assign-problem-option small {
+  margin-top: 0.2rem;
+  color: var(--text-soft);
+}
 
 .group-list {
   list-style: none;
@@ -3702,6 +3737,7 @@ h3 { font-size: 0.95rem; font-weight: 700; }
 @media (max-width: 960px) {
   .assign-form .assign-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .assign-field-wide { grid-column: span 2; }
+  .assign-problem-picker { grid-template-columns: 1fr; }
   .group-row { grid-template-columns: 1fr; }
   .group-progress { margin-top: 0.35rem; }
 }

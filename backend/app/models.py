@@ -276,7 +276,8 @@ class ProblemDetail(ProblemCard):
 
 class AssignmentCreate(SQLModel):
     title: str
-    problem_id: int
+    problem_id: Optional[int] = None
+    problem_ids: List[int] = Field(default_factory=list)
     assignment_type: AssignmentType
     class_name: Optional[str] = None
     student_ids: List[int] = Field(default_factory=list)

@@ -137,9 +137,20 @@ def create_assignments(
     current_user: User = Depends(auth.require_teacher),
     session: Session = Depends(get_session),
 ):
-    problem = session.get(Problem, payload.problem_id)
-    if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
+    problem_ids = list(dict.fromkeys([
+        *([payload.problem_id] if payload.problem_id is not None else []),
+        *payload.problem_ids,
+    ]))
+    if not problem_ids:
+        raise HTTPException(status_code=400, detail="문제를 하나 이상 선택해 주세요.")
+
+    problems = {
+        problem.id: problem
+        for problem in session.exec(select(Problem).where(Problem.id.in_(problem_ids))).all()
+    }
+    missing_problem_ids = [problem_id for problem_id in problem_ids if problem_id not in problems]
+    if missing_problem_ids:
+        raise HTTPException(status_code=404, detail=f"Problem not found: {missing_problem_ids[0]}")
 
     target_student_ids: List[int] = []
     resolved_class_name: Optional[str] = None
@@ -167,25 +178,29 @@ def create_assignments(
         select(User).where(User.id.in_(target_student_ids))
     ).all()}
     created_assignments: List[Assignment] = []
-    for student_id in target_student_ids:
-        student = students_map.get(student_id)
-        if (
-            not student
-            or student.role != UserRole.student
-            or student.primary_teacher_id != current_user.id
-        ):
-            continue
-        assignment = Assignment(
-            title=payload.title,
-            problem_id=payload.problem_id,
-            teacher_id=current_user.id,
-            student_id=student_id,
-            assignment_type=payload.assignment_type,
-            due_at=payload.due_at,
-            classroom_label=payload.classroom_label or resolved_class_name or student.class_name,
-        )
-        session.add(assignment)
-        created_assignments.append(assignment)
+    base_title = payload.title.strip()
+    for problem_id in problem_ids:
+        problem = problems[problem_id]
+        assignment_title = base_title or f"{problem.title} 과제"
+        for student_id in target_student_ids:
+            student = students_map.get(student_id)
+            if (
+                not student
+                or student.role != UserRole.student
+                or student.primary_teacher_id != current_user.id
+            ):
+                continue
+            assignment = Assignment(
+                title=assignment_title,
+                problem_id=problem_id,
+                teacher_id=current_user.id,
+                student_id=student_id,
+                assignment_type=payload.assignment_type,
+                due_at=payload.due_at,
+                classroom_label=payload.classroom_label or resolved_class_name or student.class_name,
+            )
+            session.add(assignment)
+            created_assignments.append(assignment)
 
     session.commit()
     for assignment in created_assignments:

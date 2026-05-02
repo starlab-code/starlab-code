@@ -228,6 +228,7 @@ type AssignmentDraft = {
   assignment_type: AssignmentType;
   class_name: string;
   problem_id: number | null;
+  problem_ids: number[];
   due_at: string;
   classroom_label: string;
 };
@@ -327,6 +328,7 @@ const emptyAssignmentDraft = (): AssignmentDraft => ({
   assignment_type: "homework",
   class_name: "",
   problem_id: null,
+  problem_ids: [],
   due_at: "",
   classroom_label: "",
 });
@@ -2707,8 +2709,13 @@ export default function App() {
       navigate("assignments");
       return;
     }
-    if (!assignmentDraft.problem_id) {
-      setError("문제를 먼저 선택해 주세요.");
+    const selectedProblemIds = assignmentDraft.problem_ids.length > 0
+      ? assignmentDraft.problem_ids
+      : assignmentDraft.problem_id
+        ? [assignmentDraft.problem_id]
+        : [];
+    if (selectedProblemIds.length === 0) {
+      setError("문제를 하나 이상 선택해 주세요.");
       return;
     }
     if (!assignmentDraft.class_name) {
@@ -2716,14 +2723,13 @@ export default function App() {
       return;
     }
     try {
-      const pickedProblem = problems.find((p) => p.id === assignmentDraft.problem_id);
       await request<Assignment[]>(
         "/assignments",
         {
           method: "POST",
           body: JSON.stringify({
-            title: assignmentDraft.title || `${pickedProblem?.title ?? "선택 문제"} 과제`,
-            problem_id: assignmentDraft.problem_id,
+            title: assignmentDraft.title,
+            problem_ids: selectedProblemIds,
             assignment_type: assignmentDraft.assignment_type,
             class_name: assignmentDraft.class_name,
             due_at: assignmentDraft.due_at || null,
@@ -2732,7 +2738,7 @@ export default function App() {
         },
         token,
       );
-      setMessage(`'${assignmentDraft.class_name}' 수강반에 과제를 배정했습니다.`);
+      setMessage(`'${assignmentDraft.class_name}' 수강반에 과제 ${selectedProblemIds.length}개를 배정했습니다.`);
       setAssignmentDraft(emptyAssignmentDraft());
       await loadAppData(token, user ?? undefined);
       navigate("assignments");
@@ -5604,6 +5610,29 @@ function AssignmentsView(props: {
   }, [students]);
 
   const activeGroup = groups.find((g) => g.group_key === activeGroupKey) ?? null;
+  const selectedProblemIds = assignmentDraft.problem_ids.length > 0
+    ? assignmentDraft.problem_ids
+    : assignmentDraft.problem_id
+      ? [assignmentDraft.problem_id]
+      : [];
+  const selectedProblemSet = new Set(selectedProblemIds);
+  const toggleAssignmentProblem = (problemId: number) => {
+    setAssignmentDraft((current) => {
+      const currentIds = current.problem_ids.length > 0
+        ? current.problem_ids
+        : current.problem_id
+          ? [current.problem_id]
+          : [];
+      const nextIds = currentIds.includes(problemId)
+        ? currentIds.filter((id) => id !== problemId)
+        : [...currentIds, problemId];
+      return {
+        ...current,
+        problem_id: nextIds[0] ?? null,
+        problem_ids: nextIds,
+      };
+    });
+  };
 
   if (user.role === "student") {
     return (
@@ -5691,22 +5720,29 @@ function AssignmentsView(props: {
           <span className="muted small">문제 + 수강반 선택만으로 즉시 배정</span>
         </header>
         <div className="assign-grid">
-          <label className="assign-field">
+          <div className="assign-field assign-field-wide">
             <span>문제</span>
-            <select
-              value={assignmentDraft.problem_id ?? ""}
-              onChange={(e) =>
-                setAssignmentDraft((c) => ({ ...c, problem_id: e.target.value ? Number(e.target.value) : null }))
-              }
-            >
-              <option value="">문제를 선택하세요</option>
-              {problems.map((p) => (
-                <option key={p.id} value={p.id}>
-                  [{p.category_name}] {p.title}
-                </option>
-              ))}
-            </select>
-          </label>
+            <div className="assign-problem-picker" role="group" aria-label="과제로 배정할 문제 선택">
+              {problems.length === 0 ? (
+                <p className="empty-inline">등록된 문제가 없습니다. 먼저 문제를 만들어 주세요.</p>
+              ) : (
+                problems.map((p) => (
+                  <label key={p.id} className="assign-problem-option">
+                    <input
+                      type="checkbox"
+                      checked={selectedProblemSet.has(p.id)}
+                      onChange={() => toggleAssignmentProblem(p.id)}
+                    />
+                    <span>
+                      <strong>{p.title}</strong>
+                      <small>{p.category_name} · {difficultyLabel(p.difficulty)}</small>
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+            <span className="muted small">{selectedProblemIds.length}개 문제 선택됨</span>
+          </div>
           <label className="assign-field">
             <span>수강반</span>
             <select
@@ -5761,9 +5797,9 @@ function AssignmentsView(props: {
           <button
             className="btn btn-primary"
             type="submit"
-            disabled={!assignmentDraft.problem_id || !assignmentDraft.class_name}
+            disabled={selectedProblemIds.length === 0 || !assignmentDraft.class_name}
           >
-            이 수강반에 과제 배정
+            선택한 문제 배정
           </button>
         </div>
       </form>
