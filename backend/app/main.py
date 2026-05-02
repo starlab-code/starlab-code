@@ -1165,6 +1165,56 @@ def enqueue_submit_solution(
     return enqueue_submission_job(problem_id, payload, SubmissionJobKind.submit, current_user)
 
 
+def stream_queued_submission_job(job_id: int):
+    yield json.dumps({"kind": "start", "total": 0, "phase": "queued"}) + "\n"
+    while True:
+        with Session(engine) as session:
+            job = session.get(SubmissionJob, job_id)
+            if not job:
+                yield json.dumps({
+                    "kind": "done",
+                    "status": "runtime_error",
+                    "passed_tests": 0,
+                    "total_tests": 0,
+                    "runtime_ms": 0,
+                    "error_message": "Submission job not found",
+                }) + "\n"
+                return
+            status = job.status
+            error_message = job.error_message
+            result_json = job.result_json
+
+        if status == SubmissionJobStatus.failed:
+            yield json.dumps({
+                "kind": "done",
+                "status": "runtime_error",
+                "passed_tests": 0,
+                "total_tests": 0,
+                "runtime_ms": 0,
+                "error_message": error_message or "Grading job failed.",
+            }) + "\n"
+            return
+
+        if result_json:
+            result = CodeExecutionResponse.parse_obj(json.loads(result_json))
+            yield json.dumps({"kind": "start", "total": result.total_tests}) + "\n"
+            for item in result.results:
+                payload_dict = item.dict()
+                payload_dict["kind"] = "result"
+                yield json.dumps(payload_dict, default=str) + "\n"
+            runtime_ms = max((item.runtime_ms for item in result.results), default=0)
+            yield json.dumps({
+                "kind": "done",
+                "status": result.status,
+                "passed_tests": result.passed_tests,
+                "total_tests": result.total_tests,
+                "runtime_ms": runtime_ms,
+            }) + "\n"
+            return
+
+        time.sleep(0.5)
+
+
 @app.get("/submission-jobs/{job_id}", response_model=SubmissionJobRead)
 def get_submission_job(
     job_id: int,
@@ -1288,26 +1338,9 @@ def run_visible_tests_stream(
     payload: RunCodeRequest,
     current_user: User = Depends(auth.get_current_user),
 ):
-    raise HTTPException(status_code=410, detail="Direct streaming grading is disabled. Use /run/jobs instead.")
-    del current_user
-    # Open and close the DB session before streaming so the connection is not
-    # held while the (potentially slow) judge subprocess runs. On Render's
-    # 0.1 vCPU free tier judging can take several seconds per submission;
-    # holding a pooled connection through the StreamingResponse exhausts the
-    # SQLAlchemy QueuePool with only a handful of concurrent users.
-    with Session(engine) as session:
-        problem = session.get(Problem, problem_id)
-        if not problem:
-            raise HTTPException(status_code=404, detail="Problem not found")
-        tests = fetch_tests(session, problem_id, public_only=True)
-        # Fully detach loaded ORM objects from the session before it closes
-        # so the streaming generator can use them without lazy-loading.
-        session.expunge_all()
-    if not tests:
-        raise HTTPException(status_code=400, detail="No public testcases configured")
-
+    created = enqueue_submission_job(problem_id, payload, SubmissionJobKind.run, current_user)
     return StreamingResponse(
-        stream_execution(problem, payload, tests),
+        stream_queued_submission_job(created.job_id),
         media_type="application/x-ndjson",
     )
 
@@ -1318,45 +1351,8 @@ def submit_solution_stream(
     payload: RunCodeRequest,
     current_user: User = Depends(auth.get_current_user),
 ):
-    raise HTTPException(status_code=410, detail="Direct streaming grading is disabled. Use /submit/jobs instead.")
-    # See run_visible_tests_stream: release the DB connection before judging.
-    with Session(engine) as session:
-        problem = session.get(Problem, problem_id)
-        if not problem:
-            raise HTTPException(status_code=404, detail="Problem not found")
-
-        assignment = validate_submission_assignment(session, payload.assignment_id, problem_id, current_user)
-        assignment_id = assignment.id if assignment else None
-
-        tests = fetch_tests(session, problem_id, public_only=False)
-        session.expunge_all()
-    if not tests:
-        raise HTTPException(status_code=400, detail="No testcases configured")
-
-    user_id = current_user.id
-    language = payload.language
-    code = payload.code
-    total_tests = len(tests)
-
-    def on_complete(status: str, passed: int, runtime_ms: int):
-        with Session(engine) as local_session:
-            submission = Submission(
-                problem_id=problem_id,
-                user_id=user_id,
-                assignment_id=assignment_id,
-                language=language,
-                code=code,
-                status=SubmissionStatus(status),
-                passed_tests=passed,
-                total_tests=total_tests,
-                runtime_ms=runtime_ms,
-            )
-            local_session.add(submission)
-            local_session.commit()
-            local_session.refresh(submission)
-            return {"submission_id": submission.id}
-
+    created = enqueue_submission_job(problem_id, payload, SubmissionJobKind.submit, current_user)
     return StreamingResponse(
-        stream_execution(problem, payload, tests, on_complete=on_complete),
+        stream_queued_submission_job(created.job_id),
         media_type="application/x-ndjson",
     )
