@@ -5086,7 +5086,7 @@ function SolveView(props: {
           <CodeEditor value={code} onChange={onChangeCode} language={language} />
         </div>
 
-        {stream && <GradingPanel stream={stream} isRunning={isRunning} />}
+        {stream && <GradingPanel stream={stream} isRunning={isRunning} onClose={() => setStream(null)} />}
       </section>
 
       {codeModalOpen && selectedSubmission && createPortal(
@@ -6461,7 +6461,7 @@ function ManageView(props: {
   );
 }
 
-function GradingPanel({ stream, isRunning }: { stream: StreamState; isRunning: boolean }) {
+function GradingPanel({ stream, isRunning, onClose }: { stream: StreamState; isRunning: boolean; onClose: () => void }) {
   const totalTests = Math.max(stream.total, stream.results.length);
   const overallPct = totalTests > 0 ? Math.round((stream.completed / totalTests) * 100) : 0;
   const slots = Array.from({ length: totalTests }, (_, index) => index);
@@ -6496,6 +6496,7 @@ function GradingPanel({ stream, isRunning }: { stream: StreamState; isRunning: b
         <div className="sv-gsub mono">
           {stream.completed}/{totalTests || "?"}
         </div>
+        <button className="sv-gclose" onClick={onClose} title="닫기">✕</button>
       </div>
 
       <div className="sv-progress">

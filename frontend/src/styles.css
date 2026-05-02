@@ -2261,6 +2261,21 @@ h3 { font-size: 0.95rem; font-weight: 700; }
   font-size: 12px;
   color: #8b949e;
 }
+.sv-gclose {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #8b949e;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.sv-gclose:hover {
+  color: #c9d1d9;
+  background: rgba(255, 255, 255, 0.08);
+}
 .sv-progress {
   height: 8px;
   background: rgba(255, 255, 255, 0.07);
